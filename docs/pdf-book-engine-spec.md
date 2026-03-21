@@ -43,24 +43,36 @@ interface HeaderFooterContent {
   fontSize?: number;
 }
 
+// Printer profile — abstracts printer-specific constraints
+interface PrinterProfile {
+  name: string;
+  gutterTable: Array<{ maxPages: number; gutter: number }>;
+  minMargins?: { top: number; bottom: number; inside: number; outside: number };
+  allowedTrimSizes?: Array<{ width: number; height: number; label?: string }>;
+  bleedRequired?: boolean;
+  maxPageCount?: number;
+}
+
+// Built-in profiles (shipped with engine)
+const LULU_PROFILE: PrinterProfile;
+const KDP_PROFILE: PrinterProfile;          // Amazon Kindle Direct Publishing
+const INGRAM_PROFILE: PrinterProfile;       // IngramSpark
+
 interface PdfBookConfig {
+  // Printer (defaults to LULU_PROFILE)
+  printer?: PrinterProfile;
+
   // Page dimensions (inches)
   trimWidth: number;
   trimHeight: number;
 
-  // Margins (inches)
+  // Margins (inches) — validated against printer.minMargins
   margins: {
     top: number;
     bottom: number;
-    inside: number;    // Fallback if no gutterTable provided
+    inside: number;    // Fallback gutter if printer has no gutterTable
     outside: number;
   };
-
-  // Adaptive gutter (optional — Lulu defaults used if omitted)
-  gutterTable?: Array<{
-    maxPages: number;  // Up to this many pages...
-    gutter: number;    // ...use this gutter (inches)
-  }>;
 
   // Fonts — user must provide (paths or ArrayBuffers)
   fonts: {
@@ -110,6 +122,7 @@ const images: Record<string, ArrayBuffer> = {
 };
 
 const pdf = await generateBook(chapters, {
+  printer: LULU_PROFILE,  // or KDP_PROFILE, INGRAM_PROFILE, or custom
   trimWidth: 6,
   trimHeight: 9,
   margins: { top: 0.75, bottom: 0.75, inside: 0.75, outside: 0.5 },
@@ -155,14 +168,16 @@ src/pdf-book-engine/
 ├── index.ts              # Public API entry point (generateBook)
 ├── types.ts              # Shared types & interfaces
 ├── html-parser.ts        # HTML → block/inline IR
-├── font-manager.ts       # Font loading, glyph metrics (via opentype.js)
-├── text-measurer.ts      # Measures text runs using font metrics
+├── font-manager.ts       # Font loading, glyph metrics cache (via opentype.js)
+├── text-measurer.ts      # Measures text runs using cached font metrics
 ├── line-breaker.ts       # Knuth-Plass line breaking algorithm
 ├── page-breaker.ts       # Assigns lines to pages (widow/orphan control)
-├── layout-engine.ts      # Orchestrator: IR → positioned elements
+├── layout-engine.ts      # Orchestrator: IR → positioned elements (runs convergence loop)
 ├── pdf-writer.ts         # Low-level PDF object generation (via pdf-lib)
 ├── pdf-renderer.ts       # Renders positioned elements → PDF drawing ops
-└── utils.ts              # Unit conversion, gutter table, helpers
+├── printer-profiles.ts   # Built-in PrinterProfile definitions (Lulu, KDP, IngramSpark)
+├── validator.ts          # Config validation against printer profile constraints
+└── utils.ts              # Unit conversion, helpers
 ```
 
 ### Pipeline
@@ -244,12 +259,14 @@ Each stage has a narrow contract, enabling isolated unit testing.
 Thicker books need wider inside margins because pages curve at the spine. The engine:
 
 1. Estimates page count from content
-2. Looks up gutter from tier table (built-in Lulu defaults or user-provided)
+2. Looks up gutter from the active `PrinterProfile.gutterTable`
 3. Lays out the entire book with that gutter
 4. Checks actual page count → looks up gutter for that count
 5. If gutter changed, re-layouts. Repeats until stable (typically 1-2 iterations)
 
-**Built-in Lulu defaults** are used unless the user provides a custom `gutterTable`.
+The gutter table comes from the selected printer profile (Lulu, KDP, IngramSpark, or custom). Falls back to `margins.inside` if the profile has no gutter table.
+
+**Critical for performance**: Re-layout during convergence skips HTML parsing — the IR is stable. Only line breaking and page breaking re-run (see Performance Strategy below).
 
 ### Links → Footnotes
 
@@ -314,6 +331,129 @@ Thicker books need wider inside margins because pages curve at the spine. The en
 - Tables
 - Code blocks with background
 - Web worker wrapper & progress messages
+
+---
+
+## Performance Strategy
+
+The engine is designed for ultra-fast renders. A 300-page novel should render in **under 2 seconds** on a modern machine. Here's how:
+
+### Font Metrics Caching
+
+Font metric lookups ("how wide is codepoint U+0041 in Garamond at 11pt?") happen thousands of times during line breaking. The `FontManager` builds a `Map<number, number>` (codepoint → advance width) on first font load. Every subsequent lookup is a single hash map hit — no repeated opentype.js calls.
+
+Kerning pairs are similarly cached: `Map<string, number>` keyed by `"cp1,cp2"`.
+
+### Incremental Convergence Re-layout
+
+The gutter convergence loop can re-run layout 1-3 times. Each iteration is cheap because:
+
+1. **HTML parsing is skipped** — the IR (block/inline tree) is immutable after the first pass
+2. **Font metrics are cached** — no font re-parsing
+3. **Only line breaking + page breaking re-run** — these operate on the cached IR with updated available width
+
+The pipeline during convergence iteration N (N > 1):
+
+```
+[cached IR] → Line Breaker (new width) → Page Breaker → count pages → check gutter
+```
+
+vs. the full first pass:
+
+```
+HTML → IR → Font Load → Line Breaker → Page Breaker → Layout → PDF
+```
+
+### Paragraph-Level Invalidation
+
+When the gutter changes, the text block width changes. But if the new width maps to the same gutter tier, no re-layout is needed. When it does change:
+
+- Each paragraph's line break result is cached with the available width that produced it
+- Only paragraphs whose available width actually changed get re-broken
+- In practice, the width change from a gutter adjustment is small, and many paragraphs produce the same line breaks at the new width — but we re-break all of them for correctness in the MVP, with selective invalidation as a future optimization
+
+### Streaming PDF Assembly
+
+Pages are written to the PDF document sequentially. The engine doesn't hold a full in-memory representation of all pages before writing — it builds each page's content stream and hands it to pdf-lib as it goes. This keeps memory proportional to the largest single page, not the entire book.
+
+### Pre-allocated Buffers
+
+Text measurement results and line break candidates use pre-allocated typed arrays where possible, avoiding GC pressure from thousands of small object allocations during the inner loops of Knuth-Plass.
+
+### Performance Targets
+
+| Metric | Target |
+|--------|--------|
+| 300-page novel (text only) | < 2 seconds |
+| Gutter convergence iteration | < 500ms (re-layout only) |
+| Font metrics cache hit rate | > 99% after warmup |
+| Memory (300-page book) | < 100MB peak |
+
+---
+
+## Printer Profiles
+
+The engine abstracts printer-specific constraints behind `PrinterProfile` objects. This makes it trivial to target different print-on-demand services.
+
+### Built-in Profiles
+
+The engine ships with profiles for major POD services:
+
+| Profile | Service | Notes |
+|---------|---------|-------|
+| `LULU_PROFILE` | Lulu.com | Default. Wide trim size selection, standard gutter table |
+| `KDP_PROFILE` | Amazon KDP | Kindle Direct Publishing. Different gutter requirements |
+| `INGRAM_PROFILE` | IngramSpark | Industry-standard distribution. Strictest margin requirements |
+
+### What a Profile Contains
+
+```typescript
+interface PrinterProfile {
+  name: string;
+  gutterTable: Array<{ maxPages: number; gutter: number }>;
+  minMargins?: { top: number; bottom: number; inside: number; outside: number };
+  allowedTrimSizes?: Array<{ width: number; height: number; label?: string }>;
+  bleedRequired?: boolean;
+  maxPageCount?: number;
+}
+```
+
+- **gutterTable**: Drives the adaptive gutter convergence loop
+- **minMargins**: Engine validates user margins against these minimums and warns/errors if too small
+- **allowedTrimSizes**: If present, engine validates that the requested trim size is supported by this printer
+- **bleedRequired**: Whether the printer requires bleed area (future — Phase 3)
+- **maxPageCount**: Upper limit on page count for this printer
+
+### Custom Profiles
+
+Users can create custom profiles for other printers or override built-in ones:
+
+```typescript
+const myPrinter: PrinterProfile = {
+  name: 'LocalPrintShop',
+  gutterTable: [
+    { maxPages: 150, gutter: 0.5 },
+    { maxPages: 300, gutter: 0.625 },
+    { maxPages: Infinity, gutter: 0.75 },
+  ],
+  minMargins: { top: 0.5, bottom: 0.5, inside: 0.5, outside: 0.25 },
+};
+
+const pdf = await generateBook(chapters, {
+  printer: myPrinter,
+  // ...
+}, images);
+```
+
+### Validation
+
+Before layout begins, the engine validates the config against the printer profile:
+
+1. **Trim size** — if `allowedTrimSizes` is set, checks the requested size is in the list
+2. **Margins** — warns if any margin is below `minMargins`
+3. **Page count** — after layout, warns if total pages exceed `maxPageCount`
+
+Validation issues are returned as warnings (not errors) so the user can proceed if they know what they're doing.
 
 ---
 
