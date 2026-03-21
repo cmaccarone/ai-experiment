@@ -19,9 +19,12 @@ interface Chapter {
   title: string
   html: string       // HTML content (from TipTap or any source)
   startOnRecto?: boolean  // default: true
+  pageNumbering?: 'roman' | 'arabic' | 'none'  // default: 'arabic'
+  images?: Record<string, ArrayBuffer>  // map of src URL → image bytes (pre-resolved by caller)
 }
 
 interface BookConfig {
+  bookTitle?: string   // used for running headers when configured as 'bookTitle'
   trimSize: { width: number; height: number }  // in points (1/72 inch)
   margins: {
     top: number
@@ -29,21 +32,26 @@ interface BookConfig {
     inside: number   // spine side
     outside: number
   }
-  gutter: number | GutterLookup
+  gutter: number | GutterTable
   fonts: FontConfig
   theme?: ThemeConfig
 }
 
 // Gutter convergence lives in the engine.
-// Caller provides either a fixed number or a lookup.
-type GutterLookup = (pageCount: number) => number
+// Caller provides either a fixed number or a serializable lookup table.
+// GutterTable maps a max page count to a gutter value in points.
+// E.g., { 100: 18, 200: 24, 300: 30, Infinity: 36 }
+// The engine finds the smallest key >= actual page count.
+type GutterTable = Record<number, number>
 ```
 
-When `gutter` is a `GutterLookup` function, the engine:
+When `gutter` is a `GutterTable`, the engine:
 1. Lays out with gutter = 0
-2. Gets page count, calls the lookup to get the real gutter
+2. Gets page count, looks up the gutter value from the table (smallest key >= page count)
 3. Re-lays out with the new gutter
 4. Repeats until page count stabilizes (max 5 iterations, then uses last result)
+
+`GutterTable` is a plain object, so it survives `postMessage` serialization to web workers.
 
 ---
 
@@ -98,7 +106,7 @@ type Block =
   | { type: 'blockquote'; children: Block[] }
   | { type: 'list'; ordered: boolean; items: Block[][] }
   | { type: 'codeBlock'; text: string }
-  | { type: 'image'; src: string; alt?: string }
+  | { type: 'image'; src: string; alt?: string }  // src is a key into Chapter.images
   | { type: 'table'; rows: TableRow[] }
   | { type: 'horizontalRule' }
 
@@ -139,11 +147,18 @@ interface FontFamily {
 }
 ```
 
-The engine uses fontkit (or equivalent) to:
+Font handling is split between two layers:
+
+**fontkit** (for layout — text measurement):
 - Parse font metrics (glyph widths, ascent, descent, line gap)
 - Measure text for line breaking
-- Subset fonts for PDF embedding (only include used glyphs)
 - Extract kerning pairs
+
+**pdf-lib** (for rendering — PDF embedding):
+- Embed fonts into the PDF via `embedFont()` with `subset: true`
+- pdf-lib handles font subsetting internally; the engine does NOT manually subset
+
+Note: The standard `pdf-lib` + `@pdf-lib/fontkit` pairing has known compatibility issues with modern bundlers. If integration problems arise, use the maintained `@pdfme/pdf-lib` fork which bundles fontkit directly.
 
 ---
 
@@ -156,6 +171,8 @@ The engine uses the Knuth-Plass algorithm for paragraph line breaking:
 - Minimizes total "badness" (uneven spacing) across the paragraph
 - Produces justified text without rivers of white space
 - Integrates with hyphenation for more break opportunities
+
+Implementation approach: Use the existing `tex-linebreak` npm package (by Robert Knight) as a starting point rather than implementing from scratch. This is a well-tested JS implementation of the algorithm. If it needs modification for our use case, fork and adapt.
 
 ### Hyphenation
 
@@ -226,9 +243,9 @@ Optional feature, configured per-theme:
 ```typescript
 interface DropCapConfig {
   enabled: boolean
-  lines: number        // how many lines the drop cap spans (default: 3)
-  fontFamily?: string  // optional decorative font override
-  bold?: boolean       // default: true
+  lines: number           // how many lines the drop cap spans (default: 3)
+  font?: ArrayBuffer      // optional decorative font override (OTF/TTF bytes)
+  bold?: boolean          // default: true
 }
 ```
 
@@ -251,12 +268,12 @@ interface ThemeConfig {
     firstLineIndent?: number // in points, default: 20
   }
   headings?: {
-    h1?: { fontSize?: number; bold?: boolean; align?: string }
-    h2?: { fontSize?: number; bold?: boolean; align?: string }
-    h3?: { fontSize?: number; bold?: boolean; align?: string }
-    h4?: { fontSize?: number; bold?: boolean; align?: string }
-    h5?: { fontSize?: number; bold?: boolean; align?: string }
-    h6?: { fontSize?: number; bold?: boolean; align?: string }
+    h1?: { fontSize?: number; bold?: boolean; align?: 'left' | 'center' | 'right' }
+    h2?: { fontSize?: number; bold?: boolean; align?: 'left' | 'center' | 'right' }
+    h3?: { fontSize?: number; bold?: boolean; align?: 'left' | 'center' | 'right' }
+    h4?: { fontSize?: number; bold?: boolean; align?: 'left' | 'center' | 'right' }
+    h5?: { fontSize?: number; bold?: boolean; align?: 'left' | 'center' | 'right' }
+    h6?: { fontSize?: number; bold?: boolean; align?: 'left' | 'center' | 'right' }
   }
   chapterOpener?: {
     topDrop?: number         // fraction of page height for top spacing (default: 0.33)
@@ -270,7 +287,7 @@ interface ThemeConfig {
   }
   codeBlock?: {
     fontSize?: number
-    backgroundColor?: string
+    backgroundColor?: { r: number; g: number; b: number }  // RGB 0-1
     padding?: number
   }
   runningHeader?: {
@@ -289,6 +306,52 @@ interface ThemeConfig {
   }
 }
 ```
+
+---
+
+## Image Handling
+
+Images are **not** fetched by the engine. The caller pre-resolves all images and provides them as `ArrayBuffer`s in the `Chapter.images` map, keyed by the `src` attribute from the HTML.
+
+```typescript
+// Caller resolves images before passing to engine
+const chapter: Chapter = {
+  title: 'Chapter 1',
+  html: '<p>Look at this:</p><img src="photo.jpg" alt="A photo">',
+  images: {
+    'photo.jpg': photoArrayBuffer  // pre-fetched by caller
+  }
+}
+```
+
+- If an image `src` is not found in the `images` map, render a placeholder box with the alt text
+- Images are scaled to fit within the content area width, maintaining aspect ratio
+- Full-width images get their own block; inline images are not supported (images are always block-level)
+
+---
+
+## Table Layout
+
+Tables use a simple layout algorithm (not the full CSS table model):
+
+- **Column widths**: Proportional to content. Measure the natural width of each column's content, then distribute available width proportionally. Columns have a minimum width to prevent collapse.
+- **Cell padding**: Configurable via theme (default: 4pt)
+- **Borders**: Simple 0.5pt lines between cells (configurable: all, header-only, none)
+- **Text wrapping**: Cell content wraps within the calculated column width
+- **Page spanning**: Tables do NOT span pages. If a table doesn't fit on the current page, it moves to the next page. If a table is taller than a full page, it is truncated with a warning.
+- **Header rows**: Optional, rendered in bold
+
+This is intentionally simple. Complex table layout (merged cells, column spans) is out of scope.
+
+---
+
+## Section Tracking for Running Headers
+
+The engine tracks the current "section" for running headers by watching for `<h2>` elements during layout. When a `<h2>` is encountered, it becomes the current section title for subsequent recto page headers until the next `<h2>` or chapter boundary.
+
+- `<h1>` = chapter-level (used for chapter title headers)
+- `<h2>` = section-level (used for section title headers)
+- Deeper headings (`<h3>`–`<h6>`) do not affect running headers
 
 ---
 
@@ -325,11 +388,17 @@ self.onmessage = async (e) => {
 }
 ```
 
-Progress reporting via `postMessage`:
-- `{ type: 'progress', phase: 'parsing', percent: 20 }`
-- `{ type: 'progress', phase: 'layout', percent: 50 }`
-- `{ type: 'progress', phase: 'rendering', percent: 80 }`
-- `{ type: 'done', pdf: Uint8Array }`
+Worker message protocol (discriminated union):
+
+```typescript
+type WorkerMessage =
+  | { type: 'progress'; phase: 'parsing' | 'layout' | 'rendering'; percent: number }
+  | { type: 'done'; pdf: Uint8Array }
+  | { type: 'error'; message: string; details?: string }
+  | { type: 'warning'; message: string }  // e.g., missing image, truncated table
+```
+
+Note: All data crossing the worker boundary must be serializable via the structured clone algorithm. This is why `GutterTable` is a plain object (not a function), fonts are `ArrayBuffer`s, and images are pre-resolved `ArrayBuffer`s.
 
 ---
 
@@ -372,18 +441,21 @@ pdf-book-engine/
 ## Dependencies
 
 - **pdf-lib** — PDF generation
-- **fontkit** — Font parsing, metrics, subsetting (also a pdf-lib dependency)
+- **fontkit** — Font parsing and metrics (used by pdf-lib internally for embedding; used directly for text measurement during layout)
 - **htmlparser2** — HTML parsing
 - **hyphen** (or similar) — Hyphenation patterns
+- **tex-linebreak** — Knuth-Plass line breaking algorithm
 
 No native dependencies. Fully browser-compatible.
+
+Note: If `pdf-lib` + `@pdf-lib/fontkit` integration is problematic with bundlers, switch to `@pdfme/pdf-lib` (maintained fork with built-in fontkit support).
 
 ---
 
 ## Performance Considerations
 
 - **Web worker** — All heavy computation off the main thread
-- **Font subsetting** — Only embed used glyphs, reducing PDF size
+- **Font subsetting** — pdf-lib's `embedFont({ subset: true })` only embeds used glyphs, reducing PDF size
 - **Streaming layout** — Process chapters sequentially to limit memory usage
 - **Transferable buffers** — Use `Transferable` for the PDF `ArrayBuffer` when posting back to main thread
 - **Gutter convergence** — Capped iterations prevent infinite loops
