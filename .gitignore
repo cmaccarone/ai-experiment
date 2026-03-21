@@ -9,3 +9,4 @@ build/
 *.pdf
 .venv/
 .superpowers/
+node_modules/
