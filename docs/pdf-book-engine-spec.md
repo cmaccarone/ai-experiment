@@ -183,7 +183,7 @@ src/pdf-book-engine/
 ### Pipeline
 
 ```
-Chapter[]  →  HTML Parser  →  IR (block/inline tree)
+Chapter[]  →  HTML Parser  →  Blocks (flat styled runs)
                                     ↓
                               Text Measurer  ←  Font Manager (opentype.js)
                                     ↓
@@ -196,35 +196,49 @@ Chapter[]  →  HTML Parser  →  IR (block/inline tree)
                               PDF Renderer  →  pdf-lib  →  Uint8Array
 ```
 
-### Intermediate Representation (IR)
+### Block & Run Model (Flat, No IR Tree)
 
-The HTML parser converts each chapter's HTML into a typed tree. All downstream stages work on this IR, not raw HTML.
+The HTML parser converts each chapter's HTML into a flat array of **blocks**. Each block that contains text holds a flat array of **styled runs** — no nesting, no tree. The parser resolves all style inheritance (e.g., `<em><strong>text</strong></em>` → `{bold: true, italic: true}`) during parsing so downstream stages never walk trees.
 
 ```typescript
-// Block-level nodes
-type BlockNode =
-  | { type: 'paragraph'; children: InlineNode[] }
-  | { type: 'heading'; level: 2 | 3; children: InlineNode[] }
-  | { type: 'list'; ordered: boolean; items: ListItem[] }
-  | { type: 'image'; src: string; alt?: string }
-
-type ListItem = { children: InlineNode[] }
-
-// Inline nodes
-type InlineNode =
-  | { type: 'text-run'; text: string; style: InlineStyle }
-  | { type: 'link'; href: string; children: InlineNode[] }
-
-type InlineStyle = {
-  italic: boolean;
+// A styled run — the atomic unit of text. No nesting.
+type StyledRun = {
+  text: string;
   bold: boolean;
+  italic: boolean;
+  link?: string;     // href if this run is inside an <a> tag
 }
+
+// Block-level nodes — each contains flat runs, not a tree
+type Block =
+  | { type: 'paragraph'; runs: StyledRun[] }
+  | { type: 'heading'; level: 2 | 3; runs: StyledRun[] }
+  | { type: 'list'; ordered: boolean; items: StyledRun[][] }
+  | { type: 'image'; src: string; alt?: string }
 ```
+
+**Example**: `<p>She said <em>this is <strong>very</strong> important</em> to me.</p>` becomes:
+
+```typescript
+{ type: 'paragraph', runs: [
+  { text: 'She said ',   bold: false, italic: false },
+  { text: 'this is ',    bold: false, italic: true  },
+  { text: 'very',        bold: true,  italic: true  },  // nesting resolved
+  { text: ' important',  bold: false, italic: true  },
+  { text: ' to me.',     bold: false, italic: false },
+]}
+```
+
+**Why flat, not a tree:**
+- The line breaker iterates a flat array — no recursive tree walking in the hot loop
+- Style nesting is only meaningful for resolving inherited styles — the parser answers this once
+- Simpler types, fewer allocations, faster iteration
+- Links are tracked via the `link` field on runs; the layout engine collects these for footnotes
 
 ### Separation of Concerns
 
-- **HTML Parser** → produces IR tree (knows HTML, nothing else)
-- **Line Breaker** → sees flat text runs with widths, finds optimal breaks (knows Knuth-Plass, nothing about HTML or PDF)
+- **HTML Parser** → flattens HTML into blocks + styled runs (knows HTML, resolves style inheritance)
+- **Line Breaker** → iterates flat run arrays with widths, finds optimal breaks (knows Knuth-Plass, nothing about HTML or PDF)
 - **Page Breaker** → sees "things with heights", assigns to pages (knows widow/orphan rules, nothing about text)
 - **PDF Renderer** → gets "draw text at (x, y) in font F" instructions (knows PDF, nothing about layout logic)
 
