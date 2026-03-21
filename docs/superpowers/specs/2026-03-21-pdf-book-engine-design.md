@@ -349,18 +349,43 @@ Captions are rendered below the image in a smaller font size (configurable via t
 
 ### Image Placement — Single-Pass with Backfill
 
+The core goal: **no blank gaps**. When an image can't fit on the current page, text from after the image pulls up to fill the rest of the page. The image goes on the next page. No wasted space.
+
 Images are placed using a **single-pass, document-order** algorithm. This avoids re-layout iteration and O(n²) blowup:
 
 1. The layout engine processes blocks in document order (paragraphs, headings, figures, etc.)
 2. When a figure is encountered, the engine checks: does it fit on the current page (image + caption)?
 3. **If yes**: place it inline, continue with the next block
-4. **If no**: defer the figure to the **top of the next page**. Continue filling the current page with subsequent text blocks (backfill). When the next page starts, place the deferred figure first, then continue with remaining content.
+4. **If no**: defer the figure. **Pull text forward** from after the figure to fill the remainder of the current page. The deferred figure then goes at the **top of the next page**, followed by whatever text remains.
 
-Key rules:
+#### Example
+
+Document order: `[para A] [para B] [FIGURE] [para C] [para D] [para E]`
+
+The figure doesn't fit after para B. Without backfill you'd get:
+
+```
+Page 1:  para A, para B, ~~~blank space~~~   ← bad
+Page 2:  FIGURE, para C, para D, para E
+```
+
+With backfill, para C (and as much of D as fits) pull up:
+
+```
+Page 1:  para A, para B, para C, para D...   ← full page, no gap
+Page 2:  FIGURE, ...para D cont, para E
+```
+
+The figure stays within a page of where it was referenced, and no page has a blank hole.
+
+#### Rules
+
+- **No blank gaps.** When a figure is deferred, subsequent text always backfills the current page. The engine never leaves empty space where the figure was supposed to go.
 - **At most one deferred figure at a time.** If the engine encounters a second figure while one is already deferred, it forces a page break, places the first deferred figure, then evaluates the second.
 - **No re-injection.** A figure is placed exactly once. It either goes where it appears in the flow, or it moves to the top of the next page. It never bounces further.
 - **Backfill is bounded.** Only text blocks between the deferred figure and the next figure (or end of chapter) are candidates for backfill. This keeps the image within a page or two of its reference point.
 - **Chapter boundaries reset.** Deferred figures are flushed before a chapter ends — they never leak into the next chapter.
+- **Full-page images.** If a figure (image + caption) fills an entire page on its own, that's fine — it becomes a dedicated image page. Text before it fills the previous page, text after it starts the next page.
 
 This gives "close to where referenced" placement without complex float algorithms or iterative re-layout.
 
