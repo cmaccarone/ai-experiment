@@ -1,3 +1,4 @@
-tensorflow
-numpy
-matplotlib
+reportlab>=4.0
+markdown>=3.5
+Pillow>=10.0
+hyphenate>=1.1
