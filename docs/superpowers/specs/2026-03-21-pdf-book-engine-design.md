@@ -80,7 +80,8 @@ The engine accepts standard HTML as produced by rich text editors like TipTap. I
 - `<blockquote>` — Block quotes (indented, optional italic)
 - `<ul>`, `<ol>`, `<li>` — Lists with bullets/numbers, proper indentation
 - `<pre>`, `<code>` (block) — Code blocks in monospace font
-- `<img>` — Images
+- `<img>` — Images (block-level only)
+- `<figure>`, `<figcaption>` — Image with caption
 - `<hr>` — Section breaks / ornamental dividers
 - `<table>`, `<tr>`, `<td>`, `<th>` — Basic tables
 
@@ -106,7 +107,7 @@ type Block =
   | { type: 'blockquote'; children: Block[] }
   | { type: 'list'; ordered: boolean; items: Block[][] }
   | { type: 'codeBlock'; text: string }
-  | { type: 'image'; src: string; alt?: string }  // src is a key into Chapter.images
+  | { type: 'figure'; src: string; alt?: string; caption?: InlineRun[] }  // src is a key into Chapter.images
   | { type: 'table'; rows: TableRow[] }
   | { type: 'horizontalRule' }
 
@@ -290,6 +291,14 @@ interface ThemeConfig {
     backgroundColor?: { r: number; g: number; b: number }  // RGB 0-1
     padding?: number
   }
+  figure?: {
+    captionFontSize?: number    // default: 9pt
+    captionAlign?: 'left' | 'center' | 'right'  // default: 'center'
+    captionItalic?: boolean     // default: true
+    spacing?: number            // space between image and caption, default: 4pt
+    marginTop?: number          // space above figure, default: 12pt
+    marginBottom?: number       // space below figure, default: 12pt
+  }
   runningHeader?: {
     verso?: 'bookTitle' | 'chapterTitle'  // default: chapterTitle
     recto?: 'chapterTitle' | 'sectionTitle' // default: sectionTitle
@@ -311,22 +320,70 @@ interface ThemeConfig {
 
 ## Image Handling
 
+### Image Data
+
 Images are **not** fetched by the engine. The caller pre-resolves all images and provides them as `ArrayBuffer`s in the `Chapter.images` map, keyed by the `src` attribute from the HTML.
 
 ```typescript
-// Caller resolves images before passing to engine
 const chapter: Chapter = {
   title: 'Chapter 1',
-  html: '<p>Look at this:</p><img src="photo.jpg" alt="A photo">',
+  html: `
+    <p>The cathedral rose above the city.</p>
+    <figure>
+      <img src="cathedral.jpg" alt="Notre-Dame at sunset">
+      <figcaption>Notre-Dame de Paris, viewed from the Seine.</figcaption>
+    </figure>
+    <p>Its spire had been rebuilt after the fire.</p>
+  `,
   images: {
-    'photo.jpg': photoArrayBuffer  // pre-fetched by caller
+    'cathedral.jpg': cathedralArrayBuffer  // pre-fetched by caller
   }
 }
 ```
 
-- If an image `src` is not found in the `images` map, render a placeholder box with the alt text
+A bare `<img>` (without `<figure>`) is treated as a figure with no caption.
+
+### Captions
+
+Captions are rendered below the image in a smaller font size (configurable via theme), centered by default. The caption is part of the figure block — it stays with the image and never separates across a page break.
+
+### Image Placement — Single-Pass with Backfill
+
+Images are placed using a **single-pass, document-order** algorithm. This avoids re-layout iteration and O(n²) blowup:
+
+1. The layout engine processes blocks in document order (paragraphs, headings, figures, etc.)
+2. When a figure is encountered, the engine checks: does it fit on the current page (image + caption)?
+3. **If yes**: place it inline, continue with the next block
+4. **If no**: defer the figure to the **top of the next page**. Continue filling the current page with subsequent text blocks (backfill). When the next page starts, place the deferred figure first, then continue with remaining content.
+
+Key rules:
+- **At most one deferred figure at a time.** If the engine encounters a second figure while one is already deferred, it forces a page break, places the first deferred figure, then evaluates the second.
+- **No re-injection.** A figure is placed exactly once. It either goes where it appears in the flow, or it moves to the top of the next page. It never bounces further.
+- **Backfill is bounded.** Only text blocks between the deferred figure and the next figure (or end of chapter) are candidates for backfill. This keeps the image within a page or two of its reference point.
+- **Chapter boundaries reset.** Deferred figures are flushed before a chapter ends — they never leak into the next chapter.
+
+This gives "close to where referenced" placement without complex float algorithms or iterative re-layout.
+
+### Image Sizing
+
 - Images are scaled to fit within the content area width, maintaining aspect ratio
-- Full-width images get their own block; inline images are not supported (images are always block-level)
+- If the image is smaller than the content area, it is centered horizontally at its natural size
+- Maximum image height: 70% of the content area height (to leave room for surrounding text and caption)
+- If an image `src` is not found in the `images` map, render a placeholder box with the alt text
+
+### Theme Configuration for Images
+
+```typescript
+// Added to ThemeConfig
+figure?: {
+  captionFontSize?: number    // default: 9pt
+  captionAlign?: 'left' | 'center' | 'right'  // default: 'center'
+  captionItalic?: boolean     // default: true
+  spacing?: number            // space between image and caption, default: 4pt
+  marginTop?: number          // space above figure, default: 12pt
+  marginBottom?: number       // space below figure, default: 12pt
+}
+```
 
 ---
 
