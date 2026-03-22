@@ -69,15 +69,62 @@ function tokenize(html: string): Token[] {
 }
 
 function decodeEntities(text: string): string {
-  return text
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&#(\d+);/g, (_, num) => String.fromCharCode(parseInt(num, 10)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+  return sanitizeForWinAnsi(
+    text
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&#(\d+);/g, (_, num) => String.fromCharCode(parseInt(num, 10)))
+      .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))),
+  );
+}
+
+/**
+ * Replace Unicode characters that WinAnsi (CP1252) standard fonts cannot encode
+ * with their closest ASCII/WinAnsi-safe equivalents.
+ */
+const UNICODE_REPLACEMENTS: Record<string, string> = {
+  '\u2011': '-',   // non-breaking hyphen → hyphen-minus
+  '\u2012': '-',   // figure dash → hyphen-minus
+  '\u2013': '\u2013', // en dash — already in WinAnsi (0x96)
+  '\u2014': '\u2014', // em dash — already in WinAnsi (0x97)
+  '\u2015': '\u2014', // horizontal bar → em dash
+  '\u2018': '\u2018', // left single quote — already in WinAnsi (0x91)
+  '\u2019': '\u2019', // right single quote — already in WinAnsi (0x92)
+  '\u201C': '\u201C', // left double quote — already in WinAnsi (0x93)
+  '\u201D': '\u201D', // right double quote — already in WinAnsi (0x94)
+  '\u2026': '\u2026', // ellipsis — already in WinAnsi (0x85)
+  '\u2010': '-',   // hyphen → hyphen-minus
+  '\u2043': '-',   // hyphen bullet → hyphen-minus
+  '\u00AD': '-',   // soft hyphen → hyphen-minus (render as hyphen)
+  '\u200B': '',    // zero-width space → remove
+  '\u200C': '',    // zero-width non-joiner → remove
+  '\u200D': '',    // zero-width joiner → remove
+  '\uFEFF': '',    // BOM / zero-width no-break space → remove
+  '\u2028': '\n',  // line separator → newline
+  '\u2029': '\n',  // paragraph separator → newline
+  '\u202F': ' ',   // narrow no-break space → space
+  '\u205F': ' ',   // medium mathematical space → space
+  '\u3000': ' ',   // ideographic space → space
+};
+
+function sanitizeForWinAnsi(text: string): string {
+  // Fast path: check if any non-ASCII characters exist
+  if (!/[^\x00-\x7F]/.test(text)) return text;
+
+  let result = '';
+  for (const char of text) {
+    const replacement = UNICODE_REPLACEMENTS[char];
+    if (replacement !== undefined) {
+      result += replacement;
+    } else {
+      result += char;
+    }
+  }
+  return result;
 }
 
 const BLOCK_TAGS = new Set(['p', 'h2', 'h3', 'ul', 'ol', 'li', 'img', 'br']);

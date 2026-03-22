@@ -107,4 +107,34 @@ describe('parseHtml', () => {
     const runs = (blocks[0] as any).runs;
     expect(runs[0]).toEqual({ text: 'italic text', bold: false, italic: true });
   });
+
+  it('sanitizes non-breaking hyphen (U+2011) to regular hyphen', () => {
+    const blocks = parseHtml('<p>self\u2011driving cars</p>');
+    const runs = (blocks[0] as any).runs;
+    expect(runs[0].text).toBe('self-driving cars');
+  });
+
+  it('sanitizes non-breaking hyphen from HTML entity &#8209;', () => {
+    const blocks = parseHtml('<p>well&#8209;known</p>');
+    const runs = (blocks[0] as any).runs;
+    expect(runs[0].text).toBe('well-known');
+  });
+
+  it('removes zero-width characters', () => {
+    const blocks = parseHtml('<p>hello\u200Bworld</p>');
+    const runs = (blocks[0] as any).runs;
+    expect(runs[0].text).toBe('helloworld');
+  });
+
+  it('replaces narrow no-break space with regular space', () => {
+    const blocks = parseHtml('<p>100\u202Fkg</p>');
+    const runs = (blocks[0] as any).runs;
+    expect(runs[0].text).toBe('100 kg');
+  });
+
+  it('preserves WinAnsi-safe characters like en dash and em dash', () => {
+    const blocks = parseHtml('<p>2020\u20132025 \u2014 a period</p>');
+    const runs = (blocks[0] as any).runs;
+    expect(runs[0].text).toBe('2020\u20132025 \u2014 a period');
+  });
 });
