@@ -22,7 +22,7 @@ export function generateTypstDocument(
   parts.push(generateFontSetup(config));
 
   // Table of contents
-  if (config.tableOfContents) {
+  if (config.tableOfContents !== false) {
     parts.push('#outline(depth: 1)');
     parts.push('#pagebreak()');
   }
