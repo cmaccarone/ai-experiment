@@ -89,6 +89,52 @@ describe('breakLines (Knuth-Plass)', () => {
     const spaceTokens = lines[0].words.filter(w => /^\s+$/.test(w.text));
     expect(spaceTokens).toHaveLength(1);
   });
+
+  it('uses narrower width for first line when firstLineWidth is provided', () => {
+    // 6 words, each 40pts wide, space 10pts
+    // firstLineWidth = 100 → fits 2 words (40 + 10 + 40 = 90)
+    // availableWidth = 200 → fits 4 words (40+10+40+10+40+10+40 = 190)
+    const words = makeWords(['aaa', 'bbb', 'ccc', 'ddd', 'eee', 'fff'], 10);
+    // Each word is 30pts (3 chars * 10), space is 10pts
+    // firstLineWidth = 80 → fits 2 words (30 + 10 + 30 = 70, fits; +10+30=110, no)
+    // availableWidth = 200 → fits many words
+    const lines = breakLines(words, 200, 10, 80);
+
+    expect(lines.length).toBeGreaterThan(1);
+    // First line should have narrower availableWidth
+    expect(lines[0].availableWidth).toBe(80);
+    // Subsequent lines should use the full width
+    for (let i = 1; i < lines.length; i++) {
+      expect(lines[i].availableWidth).toBe(200);
+    }
+  });
+
+  it('does not produce over-stretched spaces on subsequent lines with firstLineWidth', () => {
+    // Regression test: previously, all lines were broken to firstLineWidth but
+    // subsequent lines had availableWidth set to the wider width, causing
+    // justification to over-stretch spaces.
+    const words = makeWords(
+      ['The', 'voyage', 'took', 'roughly', 'two', 'weeks', 'and', 'the', 'ship', 'arrived'],
+      10,
+    );
+    const availableWidth = 200;
+    const firstLineWidth = 150; // 50pts narrower (paragraph indent)
+    const spaceWidth = 10;
+
+    const lines = breakLines(words, availableWidth, spaceWidth, firstLineWidth);
+
+    for (const line of lines) {
+      // Content width should not exceed the line's availableWidth
+      const contentWidth = line.words
+        .filter(w => !/^\s+$/.test(w.text))
+        .reduce((sum, w) => sum + w.width, 0);
+      const spaceCount = line.words.filter(w => /^\s+$/.test(w.text)).length;
+
+      // With proper breaking, content + natural spaces should be <= availableWidth
+      const naturalWidth = contentWidth + spaceCount * spaceWidth;
+      expect(naturalWidth).toBeLessThanOrEqual(line.availableWidth + 1); // +1 for float rounding
+    }
+  });
 });
 
 describe('breakLinesGreedy', () => {

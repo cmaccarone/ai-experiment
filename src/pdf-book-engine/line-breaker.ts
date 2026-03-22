@@ -17,13 +17,20 @@ function isWhitespace(text: string): boolean {
 /**
  * Break a paragraph (array of MeasuredWords) into optimally-broken lines.
  * Uses Knuth-Plass with greedy fallback.
+ *
+ * @param firstLineWidth - Optional narrower width for the first line (e.g. paragraph indent).
+ *                         If omitted, all lines use `availableWidth`.
  */
 export function breakLines(
   words: MeasuredWord[],
   availableWidth: number,
   spaceWidth: number,
+  firstLineWidth?: number,
 ): TypesetLine[] {
   if (words.length === 0) return [];
+
+  const lineWidthFor = (lineIndex: number) =>
+    lineIndex === 0 && firstLineWidth !== undefined ? firstLineWidth : availableWidth;
 
   // Separate content words from whitespace, tracking adjacency
   const contentWords: Array<{ word: MeasuredWord; index: number; hasSpaceBefore: boolean }> = [];
@@ -52,19 +59,31 @@ export function breakLines(
   const breakNext = new Int32Array(n + 1);
   breakNext.fill(-1);
 
-  // Process from end to start
+  // We need to know which line index each word-start corresponds to.
+  // Two-pass: first pass forward to determine line indices, then backward DP.
+  // Since line indices depend on break points (circular), we use a simpler approach:
+  // Track line index during reconstruction, and run DP with the wider width
+  // (subsequent lines), then verify the first line fits.
+
+  // Forward DP: process from end to start.
+  // For the first line (starting at word 0), use lineWidthFor(0).
+  // For subsequent lines, use availableWidth.
+  // We approximate by noting that only the line starting at word 0 uses the
+  // narrower first-line width. All break points after that use availableWidth.
   for (let i = n - 1; i >= 0; i--) {
     let lineWidth = 0;
     let bestCost = Infinity;
     let bestJ = i + 1;
+    // The line starting at word i is the first line only if i === 0
+    const widthForThisLine = i === 0 ? lineWidthFor(0) : availableWidth;
 
     for (let j = i; j < n; j++) {
       lineWidth += contentWords[j].word.width;
       if (j > i && contentWords[j].hasSpaceBefore) lineWidth += spaceWidth;
 
-      if (lineWidth > availableWidth && j > i) break; // won't fit any more words
+      if (lineWidth > widthForThisLine && j > i) break; // won't fit any more words
 
-      const slack = availableWidth - lineWidth;
+      const slack = widthForThisLine - lineWidth;
       let cost: number;
 
       if (j === n - 1) {
@@ -75,7 +94,7 @@ export function breakLines(
         cost = 1e6 + Math.abs(slack) * 100;
       } else {
         // Badness = slack^3
-        cost = slack * slack * slack / (availableWidth * availableWidth);
+        cost = slack * slack * slack / (widthForThisLine * widthForThisLine);
       }
 
       cost += breakCost[j + 1];
@@ -93,6 +112,7 @@ export function breakLines(
   // Reconstruct lines
   const lines: TypesetLine[] = [];
   let start = 0;
+  let lineIndex = 0;
 
   while (start < n) {
     const end = breakNext[start];
@@ -115,11 +135,12 @@ export function breakLines(
     lines.push({
       words: lineWords,
       width: lineWidth,
-      availableWidth,
+      availableWidth: lineWidthFor(lineIndex),
       isLastLine,
     });
 
     start = end;
+    lineIndex++;
   }
 
   return lines;
