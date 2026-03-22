@@ -1,4 +1,7 @@
-import opentype from 'opentype.js';
+import * as opentypeModule from 'opentype.js';
+
+// Handle both ESM default and CJS exports
+const opentype = (opentypeModule as any).default ?? opentypeModule;
 import type { FontStyle } from './types.js';
 
 export interface FontMetrics {
@@ -21,7 +24,11 @@ export class FontManager {
     if (typeof source === 'string') {
       font = await opentype.load(source);
     } else {
-      font = opentype.parse(source);
+      // Ensure we have a true ArrayBuffer (Node Buffer won't work with DataView)
+      const buffer = source instanceof ArrayBuffer
+        ? source
+        : new Uint8Array(source as any).buffer;
+      font = opentype.parse(buffer);
     }
 
     const metrics: FontMetrics = {
