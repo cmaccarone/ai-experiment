@@ -1,4 +1,4 @@
-import { rgb, setWordSpacing, type PDFPage, type PDFImage } from 'pdf-lib';
+import { rgb, type PDFPage, type PDFImage } from 'pdf-lib';
 import type { PdfWriter } from './pdf-writer.js';
 import type {
   LayoutPage, LayoutLine, LayoutImage, Footnote,
@@ -98,48 +98,31 @@ export class PdfRenderer {
       return;
     }
 
-    // Group consecutive same-font words into runs with spaces included
-    const runs = this.buildFontRuns(words);
-    if (runs.length === 0) return;
+    // Filter to content words only (skip whitespace tokens)
+    const contentWords = words.filter(w => !/^\s+$/.test(w.text));
+    if (contentWords.length === 0) return;
 
-    // Calculate justified spacing
-    let spacePerGap = 0;
-    const isJustified = !ts.isLastLine && runs.length > 0;
+    // Calculate the gap between words
+    const totalContentWidth = contentWords.reduce((sum, w) => sum + w.width, 0);
+    let wordGap: number;
 
-    if (isJustified) {
-      const totalContentWords = runs.reduce((sum, r) => sum + r.wordCount, 0);
-      const gaps = totalContentWords - 1;
-      if (gaps > 0) {
-        const nonSpaceContentWidth = runs.reduce((sum, r) => sum + r.contentWidth, 0);
-        spacePerGap = (ts.availableWidth - nonSpaceContentWidth) / gaps;
-      }
+    if (!ts.isLastLine && contentWords.length > 1) {
+      // Justified: distribute remaining space evenly
+      wordGap = (ts.availableWidth - totalContentWidth) / (contentWords.length - 1);
+    } else {
+      // Last line or single word: use natural space width
+      const bodyFont = this.writer.getFont('body');
+      wordGap = bodyFont.widthOfTextAtSize(' ', fontSize);
     }
 
-    for (let i = 0; i < runs.length; i++) {
-      const run = runs[i];
-      const font = this.writer.getFont(run.fontStyle);
-      const naturalSpaceWidth = font.widthOfTextAtSize(' ', fontSize);
-
-      // Add trailing space so PDF extractors see spaces at run/line boundaries
-      const text = run.text + ' ';
-
-      if (isJustified && spacePerGap > 0) {
-        // Use Tw operator to adjust space character width for justification
-        const tw = spacePerGap - naturalSpaceWidth;
-        page.pushOperators(setWordSpacing(tw));
-        page.drawText(text, { x, y, size: fontSize, font, color: rgb(0, 0, 0) });
-        page.pushOperators(setWordSpacing(0));
-        // Advance: content widths + all space chars (including trailing) at justified width
-        x += run.contentWidth + run.wordCount * spacePerGap;
-      } else {
-        page.drawText(text, { x, y, size: fontSize, font, color: rgb(0, 0, 0) });
-        x += run.contentWidth + run.wordCount * naturalSpaceWidth;
-      }
+    // Render each word individually at its calculated x position.
+    // PDF extractors detect gaps between drawText calls and insert single spaces.
+    for (let i = 0; i < contentWords.length; i++) {
+      const word = contentWords[i];
+      const font = this.writer.getFont(word.fontStyle);
+      page.drawText(word.text, { x, y, size: fontSize, font, color: rgb(0, 0, 0) });
+      x += word.width + (i < contentWords.length - 1 ? wordGap : 0);
     }
-  }
-
-  private buildFontRuns(words: MeasuredWord[]): FontRun[] {
-    return buildFontRuns(words);
   }
 
   private renderImage(page: PDFPage, img: LayoutImage, pageHeight: number): void {
