@@ -23,7 +23,7 @@ export { LULU_PROFILE, KDP_PROFILE, INGRAM_PROFILE } from './printer-profiles.js
  * Generate a print-ready PDF book from structured chapter data.
  *
  * Uses Typst for typesetting — provides Knuth-Plass line breaking,
- * automatic hyphenation, widow/orphan control, and high-quality PDF output.
+ * widow/orphan control, and high-quality PDF output.
  */
 export async function generateBook(
   chapters: Chapter[],

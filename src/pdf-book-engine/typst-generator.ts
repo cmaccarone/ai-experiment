@@ -190,7 +190,7 @@ function generateTextSetup(config: PdfBookConfig): string {
   const lines: string[] = [];
   const leading = (config.lineHeight - 1) * config.fontSize;
 
-  lines.push(`#set text(size: ${config.fontSize}pt, lang: "en")`);
+  lines.push(`#set text(size: ${config.fontSize}pt, lang: "en", hyphenate: false)`);
   lines.push(`#set par(justify: true, first-line-indent: ${config.paragraphIndent}em, leading: ${leading.toFixed(2)}pt)`);
 
   return lines.join('\n');
