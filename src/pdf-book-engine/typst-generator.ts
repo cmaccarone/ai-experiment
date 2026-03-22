@@ -131,22 +131,30 @@ function generateHeaderFooterBody(cfg: import('./types.js').HeaderFooterConfig):
     const versoLeft = outside;
     const versoRight = inside;
 
-    const buildRow = (left: string, right: string): string => {
+    const buildGroup = (parts: string[]): string => {
+      const filtered = parts.filter(Boolean);
+      if (filtered.length === 1) return filtered[0];
+      return `grid(columns: (${filtered.map(() => 'auto').join(', ')}), column-gutter: 6pt, ${filtered.join(', ')})`;
+    };
+
+    const txt = (content: string) => `text(size: ${fontSize}pt)[${content}]`;
+
+    const buildRow = (left: string, right: string, side: 'left' | 'right'): string => {
       if (left && right) {
-        if (sepText) {
-          return `grid(columns: (1fr, auto, auto), column-gutter: 6pt, text(size: ${fontSize}pt)[${left}], text(size: ${fontSize}pt)[${sepText}], text(size: ${fontSize}pt)[${right}])`;
-        }
-        return `grid(columns: (1fr, auto), text(size: ${fontSize}pt)[${left}], text(size: ${fontSize}pt)[${right}])`;
+        const parts = sepText ? [txt(left), txt(sepText), txt(right)] : [txt(left), txt(right)];
+        return `align(${side}, ${buildGroup(parts)})`;
       }
-      if (left) return `align(left, text(size: ${fontSize}pt)[${left}])`;
-      if (right) return `align(right, text(size: ${fontSize}pt)[${right}])`;
+      if (left) return `align(left, ${txt(left)})`;
+      if (right) return `align(right, ${txt(right)})`;
       return '';
     };
 
+    // Recto (odd): group on the right (outside edge)
+    // Verso (even): group on the left (outside edge)
     lines.push(`    if calc.odd(n) {`);
-    lines.push(`      ${buildRow(rectoLeft, rectoRight)}`);
+    lines.push(`      ${buildRow(rectoLeft, rectoRight, 'right')}`);
     lines.push(`    } else {`);
-    lines.push(`      ${buildRow(versoLeft, versoRight)}`);
+    lines.push(`      ${buildRow(versoLeft, versoRight, 'left')}`);
     lines.push(`    }`);
   }
 
