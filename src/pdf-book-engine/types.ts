@@ -80,6 +80,7 @@ export interface PdfBookConfig {
   footer?: (ctx: PageContext) => HeaderFooterContent | null;
   widowLines: number;
   orphanLines: number;
+  tableOfContents?: boolean;
 }
 
 // ── Font style identifiers ──

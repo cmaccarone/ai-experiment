@@ -21,6 +21,12 @@ export function generateTypstDocument(
   // Font setup
   parts.push(generateFontSetup(config));
 
+  // Table of contents
+  if (config.tableOfContents) {
+    parts.push('#outline(depth: 1)');
+    parts.push('#pagebreak()');
+  }
+
   // Chapter rendering
   for (let i = 0; i < chapters.length; i++) {
     if (i > 0 || config.chapterStartRecto) {
@@ -193,6 +199,11 @@ function generateTextSetup(config: PdfBookConfig): string {
   lines.push(`#set text(size: ${config.fontSize}pt, lang: "en", hyphenate: false)`);
   lines.push(`#set par(justify: true, first-line-indent: ${config.paragraphIndent}em, leading: ${leading.toFixed(2)}pt)`);
 
+  // Style level-1 headings (chapter titles) — no numbering, bold, larger
+  const titleSize = (config.fontSize * 1.8).toFixed(1);
+  lines.push(`#set heading(numbering: none)`);
+  lines.push(`#show heading.where(level: 1): set text(size: ${titleSize}pt, weight: "bold")`);
+
   return lines.join('\n');
 }
 
@@ -224,9 +235,8 @@ function generateChapter(
     parts.push(`#v(${config.chapterTopDrop}in)`);
   }
 
-  // Chapter title as level-1 heading
-  const titleSize = config.fontSize * 1.8;
-  parts.push(`#text(size: ${titleSize.toFixed(1)}pt, weight: "bold")[${escapeTypst(title)}]`);
+  // Chapter title as level-1 heading (picked up by #outline)
+  parts.push(`#heading(level: 1)[${escapeTypst(title)}]`);
   parts.push('');
   parts.push(`#v(${(config.fontSize * config.lineHeight).toFixed(1)}pt)`);
 
