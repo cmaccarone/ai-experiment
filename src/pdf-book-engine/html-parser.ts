@@ -258,11 +258,19 @@ export function parseHtml(html: string): Block[] {
 
       if (token.type === 'openTag' && token.tag === 'li') {
         i++;
+        // ProseMirror/TipTap wraps li content in <p> tags — unwrap them
+        if (i < tokens.length && tokens[i].type === 'openTag' && tokens[i].tag === 'p') {
+          i++; // skip the inner <p>
+        }
         const runs = collectInlineRuns({ bold: false, italic: false }, 'li');
         if (runs.length > 0) {
           items.push(runs);
         }
-        skipCloseTag('li');
+        // Skip any remaining close tags (</p> and/or </li>)
+        while (i < tokens.length && tokens[i].type === 'closeTag' &&
+               (tokens[i].tag === 'p' || tokens[i].tag === 'li')) {
+          i++;
+        }
         continue;
       }
 

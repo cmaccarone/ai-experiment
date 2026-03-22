@@ -286,13 +286,13 @@ function breakParagraph(
   const measuredWords = measurer.measureRuns(runs);
   const spaceWidth = measurer.measureSpace('body');
 
-  // First line is indented
+  // First line is indented — use the narrower width for the line breaker too
   const firstLineWidth = textBlockWidth - paragraphIndent;
-  const lines = breakLines(measuredWords, textBlockWidth, spaceWidth);
+  const lines = breakLines(measuredWords, firstLineWidth, spaceWidth);
 
-  // Adjust first line for indent
-  if (lines.length > 0) {
-    lines[0].availableWidth = firstLineWidth;
+  // Subsequent lines use the full text block width
+  for (let i = 1; i < lines.length; i++) {
+    lines[i].availableWidth = textBlockWidth;
   }
 
   return lines.map((line) => ({
