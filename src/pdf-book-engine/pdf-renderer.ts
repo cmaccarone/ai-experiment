@@ -6,7 +6,7 @@ import type {
 } from './types.js';
 import { inchesToPoints } from './utils.js';
 
-interface FontRun {
+export interface FontRun {
   text: string;
   fontStyle: FontStyle;
   contentWidth: number;
@@ -139,28 +139,7 @@ export class PdfRenderer {
   }
 
   private buildFontRuns(words: MeasuredWord[]): FontRun[] {
-    const runs: FontRun[] = [];
-    let current: FontRun | null = null;
-
-    for (const word of words) {
-      if (/^\s+$/.test(word.text)) continue;
-
-      if (current && word.fontStyle === current.fontStyle) {
-        current.text += ' ' + word.text;
-        current.contentWidth += word.width;
-        current.wordCount++;
-      } else {
-        if (current) runs.push(current);
-        current = {
-          text: word.text,
-          fontStyle: word.fontStyle,
-          contentWidth: word.width,
-          wordCount: 1,
-        };
-      }
-    }
-    if (current) runs.push(current);
-    return runs;
+    return buildFontRuns(words);
   }
 
   private renderImage(page: PDFPage, img: LayoutImage, pageHeight: number): void {
@@ -259,4 +238,29 @@ export class PdfRenderer {
       totalPages,
     };
   }
+}
+
+export function buildFontRuns(words: MeasuredWord[]): FontRun[] {
+  const runs: FontRun[] = [];
+  let current: FontRun | null = null;
+
+  for (const word of words) {
+    if (/^\s+$/.test(word.text)) continue;
+
+    if (current && word.fontStyle === current.fontStyle) {
+      current.text += ' ' + word.text;
+      current.contentWidth += word.width;
+      current.wordCount++;
+    } else {
+      if (current) runs.push(current);
+      current = {
+        text: word.text,
+        fontStyle: word.fontStyle,
+        contentWidth: word.width,
+        wordCount: 1,
+      };
+    }
+  }
+  if (current) runs.push(current);
+  return runs;
 }
