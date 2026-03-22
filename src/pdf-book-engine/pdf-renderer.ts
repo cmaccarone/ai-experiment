@@ -6,6 +6,10 @@ import type {
 } from './types.js';
 import { inchesToPoints } from './utils.js';
 
+// Words containing these patterns trigger fontkit's GSUB ligature substitution,
+// which creates visual gaps in the PDF. We render these words char-by-char.
+const LIGATURE_PATTERN = /f[filft]/;
+
 export interface FontRun {
   text: string;
   fontStyle: FontStyle;
@@ -130,18 +134,22 @@ export class PdfRenderer {
       spaceGap = naturalSpace;
     }
 
-    // Render each token: content words are drawn char-by-char to avoid
-    // fontkit's buggy GSUB ligature substitution (which creates visual gaps
-    // inside words containing fi/fl). Whitespace tokens advance x by the
-    // justified gap width.
+    // Render each token. Words containing ligature pairs (fi, fl, ff) are
+    // drawn char-by-char to avoid fontkit's buggy GSUB ligature substitution
+    // which creates visual gaps. Other words use single drawText for performance.
     for (const w of words) {
       if (/^\s+$/.test(w.text)) {
         x += spaceGap;
       } else {
         const font = this.writer.getFont(w.fontStyle);
-        for (const ch of w.text) {
-          page.drawText(ch, { x, y, size: fontSize, font, color: rgb(0, 0, 0) });
-          x += font.widthOfTextAtSize(ch, fontSize);
+        if (LIGATURE_PATTERN.test(w.text)) {
+          for (const ch of w.text) {
+            page.drawText(ch, { x, y, size: fontSize, font, color: rgb(0, 0, 0) });
+            x += font.widthOfTextAtSize(ch, fontSize);
+          }
+        } else {
+          page.drawText(w.text, { x, y, size: fontSize, font, color: rgb(0, 0, 0) });
+          x += w.width;
         }
       }
     }

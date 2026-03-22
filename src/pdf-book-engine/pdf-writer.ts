@@ -26,8 +26,7 @@ export class PdfWriter {
     for (const style of styles) {
       if (fontManager.hasFont(style)) {
         try {
-          const font = fontManager.getFont(style);
-          const fontBuffer = font.toArrayBuffer();
+          const fontBuffer = fontManager.getFontBuffer(style);
           const embedded = await this.doc.embedFont(fontBuffer);
           this.embeddedFonts.set(style, embedded);
         } catch {

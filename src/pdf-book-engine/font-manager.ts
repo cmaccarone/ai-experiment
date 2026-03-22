@@ -9,6 +9,8 @@ export interface FontMetrics {
   ascender: number;
   descender: number;
   font: opentype.Font;
+  // Original font binary for PDF embedding (avoids slow re-serialization)
+  rawBuffer: ArrayBuffer;
   // Cached glyph widths: codepoint → advance width in font units
   widthCache: Map<number, number>;
   // Cached kerning: "cp1,cp2" → kerning value in font units
@@ -20,15 +22,17 @@ export class FontManager {
 
   async loadFont(style: FontStyle, source: string | ArrayBuffer): Promise<void> {
     let font: opentype.Font;
+    let rawBuffer: ArrayBuffer;
 
     if (typeof source === 'string') {
       font = await opentype.load(source);
+      rawBuffer = font.toArrayBuffer();
     } else {
       // Ensure we have a true ArrayBuffer (Node Buffer won't work with DataView)
-      const buffer = source instanceof ArrayBuffer
+      rawBuffer = source instanceof ArrayBuffer
         ? source
         : new Uint8Array(source as any).buffer;
-      font = opentype.parse(buffer);
+      font = opentype.parse(rawBuffer);
     }
 
     const metrics: FontMetrics = {
@@ -36,6 +40,7 @@ export class FontManager {
       ascender: font.ascender,
       descender: font.descender,
       font,
+      rawBuffer,
       widthCache: new Map(),
       kernCache: new Map(),
     };
@@ -106,6 +111,10 @@ export class FontManager {
 
   hasFont(style: FontStyle): boolean {
     return this.fonts.has(style);
+  }
+
+  getFontBuffer(style: FontStyle): ArrayBuffer {
+    return this.getMetrics(style).rawBuffer;
   }
 
   getFont(style: FontStyle): opentype.Font {
