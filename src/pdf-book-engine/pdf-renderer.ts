@@ -1,10 +1,17 @@
-import { rgb, type PDFPage, type PDFImage } from 'pdf-lib';
+import { rgb, setWordSpacing, type PDFPage, type PDFImage } from 'pdf-lib';
 import type { PdfWriter } from './pdf-writer.js';
 import type {
   LayoutPage, LayoutLine, LayoutImage, Footnote,
-  PdfBookConfig, PageContext, HeaderFooterContent, FontStyle,
+  PdfBookConfig, PageContext, HeaderFooterContent, FontStyle, MeasuredWord,
 } from './types.js';
 import { inchesToPoints } from './utils.js';
+
+interface FontRun {
+  text: string;
+  fontStyle: FontStyle;
+  contentWidth: number;
+  wordCount: number;
+}
 
 /**
  * Renders positioned layout elements onto PDF pages.
@@ -61,7 +68,6 @@ export class PdfRenderer {
     const words = ts.words;
     if (words.length === 0) return;
 
-    // Calculate justification spacing
     let x = line.x;
     const y = pageHeight - line.y - this.config.fontSize; // PDF y is from bottom
 
@@ -81,7 +87,6 @@ export class PdfRenderer {
     }
 
     if (isHeading || isChapterTitle) {
-      // Render as a single text draw
       const font = this.writer.getFont(fontStyle);
       page.drawText(words[0].text, {
         x,
@@ -93,57 +98,69 @@ export class PdfRenderer {
       return;
     }
 
-    // Justified text — distribute extra space between words
-    if (!ts.isLastLine && words.length > 1) {
-      // Count space-separated word groups
-      const nonSpaceWords = words.filter(w => !/^\s+$/.test(w.text));
-      const gaps = nonSpaceWords.length - 1;
+    // Group consecutive same-font words into runs with spaces included
+    const runs = this.buildFontRuns(words);
+    if (runs.length === 0) return;
 
+    // Calculate justified spacing
+    let spacePerGap = 0;
+    const isJustified = !ts.isLastLine && runs.length > 0;
+
+    if (isJustified) {
+      const totalContentWords = runs.reduce((sum, r) => sum + r.wordCount, 0);
+      const gaps = totalContentWords - 1;
       if (gaps > 0) {
-        const contentWidth = words.reduce((w, word) => w + word.width, 0);
-        const spaceWords = words.filter(w => /^\s+$/.test(w.text));
-        const totalSpaceWidth = spaceWords.reduce((w, s) => w + s.width, 0);
-        const nonSpaceContentWidth = contentWidth - totalSpaceWidth;
-        const extraSpace = ts.availableWidth - nonSpaceContentWidth;
-        const spacePerGap = extraSpace / gaps;
-
-        for (const word of words) {
-          if (/^\s+$/.test(word.text)) {
-            x += spacePerGap;
-            continue;
-          }
-
-          const font = this.writer.getFont(word.fontStyle);
-          page.drawText(word.text, {
-            x,
-            y,
-            size: fontSize,
-            font,
-            color: rgb(0, 0, 0),
-          });
-          x += word.width;
-        }
-        return;
+        const nonSpaceContentWidth = runs.reduce((sum, r) => sum + r.contentWidth, 0);
+        spacePerGap = (ts.availableWidth - nonSpaceContentWidth) / gaps;
       }
     }
 
-    // Left-aligned (last line of paragraph or single-word line)
+    for (let i = 0; i < runs.length; i++) {
+      const run = runs[i];
+      const font = this.writer.getFont(run.fontStyle);
+      const naturalSpaceWidth = font.widthOfTextAtSize(' ', fontSize);
+
+      // Add trailing space so PDF extractors see spaces at run/line boundaries
+      const text = run.text + ' ';
+
+      if (isJustified && spacePerGap > 0) {
+        // Use Tw operator to adjust space character width for justification
+        const tw = spacePerGap - naturalSpaceWidth;
+        page.pushOperators(setWordSpacing(tw));
+        page.drawText(text, { x, y, size: fontSize, font, color: rgb(0, 0, 0) });
+        page.pushOperators(setWordSpacing(0));
+        // Advance: content widths + all space chars (including trailing) at justified width
+        x += run.contentWidth + run.wordCount * spacePerGap;
+      } else {
+        page.drawText(text, { x, y, size: fontSize, font, color: rgb(0, 0, 0) });
+        x += run.contentWidth + run.wordCount * naturalSpaceWidth;
+      }
+    }
+  }
+
+  private buildFontRuns(words: MeasuredWord[]): FontRun[] {
+    const runs: FontRun[] = [];
+    let current: FontRun | null = null;
+
     for (const word of words) {
-      if (/^\s+$/.test(word.text)) {
-        x += word.width;
-        continue;
-      }
+      if (/^\s+$/.test(word.text)) continue;
 
-      const font = this.writer.getFont(word.fontStyle);
-      page.drawText(word.text, {
-        x,
-        y,
-        size: fontSize,
-        font,
-        color: rgb(0, 0, 0),
-      });
-      x += word.width;
+      if (current && word.fontStyle === current.fontStyle) {
+        current.text += ' ' + word.text;
+        current.contentWidth += word.width;
+        current.wordCount++;
+      } else {
+        if (current) runs.push(current);
+        current = {
+          text: word.text,
+          fontStyle: word.fontStyle,
+          contentWidth: word.width,
+          wordCount: 1,
+        };
+      }
     }
+    if (current) runs.push(current);
+    return runs;
   }
 
   private renderImage(page: PDFPage, img: LayoutImage, pageHeight: number): void {
