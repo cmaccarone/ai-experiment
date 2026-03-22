@@ -95,9 +95,9 @@ function generateHeaderFooterFunc(
 ): string {
   // Sample the callback with representative page contexts to detect the pattern
   const samples = [
-    { pageNumber: 1, isRecto: true, isChapterOpener: true, chapterTitle: 'CHAPTER', bookTitle: 'BOOK', totalPages: 100 },
-    { pageNumber: 2, isRecto: false, isChapterOpener: false, chapterTitle: 'CHAPTER', bookTitle: 'BOOK', totalPages: 100 },
-    { pageNumber: 3, isRecto: true, isChapterOpener: false, chapterTitle: 'CHAPTER', bookTitle: 'BOOK', totalPages: 100 },
+    { pageNumber: 99991, isRecto: true, isChapterOpener: true, chapterTitle: 'CHAPTER', bookTitle: 'BOOK', totalPages: 100 },
+    { pageNumber: 99992, isRecto: false, isChapterOpener: false, chapterTitle: 'CHAPTER', bookTitle: 'BOOK', totalPages: 100 },
+    { pageNumber: 99993, isRecto: true, isChapterOpener: false, chapterTitle: 'CHAPTER', bookTitle: 'BOOK', totalPages: 100 },
   ];
 
   const results = samples.map(ctx => ({ ctx, result: callback(ctx) }));
@@ -152,40 +152,39 @@ function generateHeaderFooterFunc(
   return lines.join('\n');
 }
 
+/**
+ * Replace sentinel values in sampled header/footer text with Typst expressions.
+ * - BOOK / CHAPTER → Typst state variables
+ * - Sampled page numbers (e.g. "2", "3") → #str(page-num)
+ */
+function substitutePlaceholders(text: string): string {
+  return text
+    .replace('BOOK', '" + _book-title_ + "')
+    .replace('CHAPTER', '" + _chapter-title_ + "')
+    .replace(/9999[123]/g, '" + str(page-num) + "');
+}
+
 function generateHeaderFooterContent(content: import('./types.js').HeaderFooterContent): string {
   const fontSize = content.fontSize ?? 9;
-  const parts: string[] = [];
 
   if (content.left && content.right) {
-    // Use a grid for left + right alignment
-    const left = escapeTypst(content.left)
-      .replace('BOOK', '" + _book-title_ + "')
-      .replace('CHAPTER', '" + _chapter-title_ + "');
-    const right = escapeTypst(content.right)
-      .replace('BOOK', '" + _book-title_ + "')
-      .replace('CHAPTER', '" + _chapter-title_ + "');
+    const left = substitutePlaceholders(escapeTypst(content.left));
+    const right = substitutePlaceholders(escapeTypst(content.right));
     return `text(size: ${fontSize}pt, fill: rgb("#4d4d4d"))[#grid(columns: (1fr, 1fr), align(left)[${left}], align(right)[${right}])]`;
   }
 
   if (content.center) {
-    let center = escapeTypst(content.center);
-    // Replace page number placeholder if present
-    if (center.includes('BOOK') || center.includes('CHAPTER')) {
-      center = center
-        .replace('BOOK', '" + _book-title_ + "')
-        .replace('CHAPTER', '" + _chapter-title_ + "');
-    }
-    // If content is a page number pattern, use Typst's counter
+    const center = substitutePlaceholders(escapeTypst(content.center));
     return `align(center, text(size: ${fontSize}pt, fill: rgb("#4d4d4d"))[${center}])`;
   }
 
   if (content.left) {
-    const left = escapeTypst(content.left);
+    const left = substitutePlaceholders(escapeTypst(content.left));
     return `align(left, text(size: ${fontSize}pt, fill: rgb("#4d4d4d"))[${left}])`;
   }
 
   if (content.right) {
-    const right = escapeTypst(content.right);
+    const right = substitutePlaceholders(escapeTypst(content.right));
     return `align(right, text(size: ${fontSize}pt, fill: rgb("#4d4d4d"))[${right}])`;
   }
 
