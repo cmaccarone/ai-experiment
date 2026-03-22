@@ -3,6 +3,10 @@ import { readFileSync, existsSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { generateBook } from './index.js';
+import { parseHtml } from './html-parser.js';
+import { FontManager } from './font-manager.js';
+import { TextMeasurer } from './text-measurer.js';
+import { breakLines } from './line-breaker.js';
 import { LULU_PROFILE, KDP_PROFILE, INGRAM_PROFILE } from './printer-profiles.js';
 import type { Chapter, PdfBookConfig } from './types.js';
 
@@ -188,5 +192,56 @@ describe.skipIf(!fontsAvailable)('Integration: generateBook', () => {
 
     // Different font sizes should produce different PDFs
     expect(pdf11.length).not.toBe(pdf14.length);
+  });
+
+  it('does not produce over-stretched justified spaces with paragraph indent', async () => {
+    // Regression test: the user-reported HTML snippet had visibly wide spaces
+    // on non-first lines because breakLines used the narrower first-line width
+    // for all lines, but justification used the full text block width.
+    const testHtml = `<p>The voyage took roughly <strong>two weeks</strong>. The ship arrived in <strong>New York on April 11, 1909</strong>.</p><h2>Ellis Island</h2><p>When they arrived, the family passed the <strong>Statue of Liberty</strong> and went through <strong>Ellis Island</strong>, where every immigrant was inspected and documented.</p><p>The ship's manifest recorded names, ages, nationality, destination, and other details. These records were not casual paperwork. They were legal immigration documents. To be \u201Cmanifested\u201D meant one\u2019s arrival had been officially documented. Officials used these records to determine whether immigrants met the legal requirements for entry, including health screening and financial support.</p>`;
+
+    const blocks = parseHtml(testHtml);
+    const fonts = loadFonts();
+    const fontManager = new FontManager();
+    await fontManager.loadFont('body', fonts.body);
+    await fontManager.loadFont('bodyBold', fonts.bodyBold);
+    await fontManager.loadFont('bodyItalic', fonts.bodyItalic);
+
+    const fontSize = 11;
+    const measurer = new TextMeasurer(fontManager, fontSize);
+    const textBlockWidth = 300; // ~4 inches of text
+    const paragraphIndent = 16.5; // 1.5em at 11pt
+    const firstLineWidth = textBlockWidth - paragraphIndent;
+    const spaceWidth = measurer.measureSpace('body');
+
+    for (const block of blocks) {
+      if (block.type !== 'paragraph') continue;
+
+      const measuredWords = measurer.measureRuns(block.runs);
+      const lines = breakLines(measuredWords, textBlockWidth, spaceWidth, firstLineWidth);
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const contentWidth = line.words
+          .filter(w => !/^\s+$/.test(w.text))
+          .reduce((sum, w) => sum + w.width, 0);
+        const spaceCount = line.words.filter(w => /^\s+$/.test(w.text)).length;
+        const naturalWidth = contentWidth + spaceCount * spaceWidth;
+
+        // Every line's natural content+spaces must fit within its availableWidth.
+        // A small tolerance (1pt) accounts for floating-point rounding.
+        expect(naturalWidth).toBeLessThanOrEqual(
+          line.availableWidth + 1,
+          `Line ${i} overflows its availableWidth (${naturalWidth.toFixed(1)} > ${line.availableWidth})`,
+        );
+
+        // First line should use the narrower indent width
+        if (i === 0) {
+          expect(line.availableWidth).toBe(firstLineWidth);
+        } else {
+          expect(line.availableWidth).toBe(textBlockWidth);
+        }
+      }
+    }
   });
 });
