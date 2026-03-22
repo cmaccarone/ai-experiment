@@ -21,7 +21,8 @@ export function generateTypstDocument(
   // Font setup
   parts.push(generateFontSetup(config));
 
-  // Table of contents
+  // Table of contents — use a heading that doesn't appear in the outline itself,
+  // and suppress headers/footers on TOC pages by wrapping in a set page scope.
   if (config.tableOfContents !== false) {
     parts.push('#outline(depth: 1)');
     parts.push('#pagebreak()');
@@ -77,7 +78,7 @@ function generatePageSetup(config: PdfBookConfig, gutterInches: number): string 
  */
 function buildContentExpr(text: string): string {
   return text.split(/(PAGE|CHAPTER)/).map(part => {
-    if (part === 'PAGE') return '" + str(n) + "';
+    if (part === 'PAGE') return '#str(n)';
     if (part === 'CHAPTER') return '#chapter-title';
     return escapeTypst(part);
   }).join('');
@@ -93,18 +94,26 @@ function generateHeaderFooterBody(cfg: import('./types.js').HeaderFooterConfig):
 
   lines.push(`    let n = counter(page).at(loc).first()`);
 
-  // Resolve current chapter title from the most recent level-1 heading before this location
+  // Query only real chapter headings (labeled <book-chapter>), not the outline title
   const needsChapter = [cfg.outside, cfg.inside, cfg.center]
     .some(s => s && s.includes('CHAPTER'));
-  if (needsChapter) {
-    lines.push(`    let all-chapters = query(heading.where(level: 1).before(loc), loc)`);
-    lines.push(`    let chapter-title = if all-chapters.len() > 0 { all-chapters.last().body } else { [] }`);
-  }
 
   if (cfg.hideOnChapterOpener !== false) {
-    // Skip on pages that contain a chapter heading
-    lines.push(`    let chapter-pages = query(heading.where(level: 1), loc).map(h => h.location().page())`);
+    // Skip on chapter opener pages and any pages before the first chapter (e.g. TOC)
+    lines.push(`    let book-chapters = query(<book-chapter>, loc)`);
+    lines.push(`    let chapter-pages = book-chapters.map(h => h.location().page())`);
     lines.push(`    if n in chapter-pages { return }`);
+    lines.push(`    if chapter-pages.len() > 0 and n < chapter-pages.first() { return }`);
+  }
+
+  if (needsChapter) {
+    if (cfg.hideOnChapterOpener !== false) {
+      // book-chapters already queried above
+      lines.push(`    let prev-chapters = book-chapters.filter(h => h.location().page() <= n)`);
+    } else {
+      lines.push(`    let prev-chapters = query(<book-chapter>, loc).filter(h => h.location().page() <= n)`);
+    }
+    lines.push(`    let chapter-title = if prev-chapters.len() > 0 { prev-chapters.last().body } else { [] }`);
   }
 
   if (cfg.center) {
@@ -113,7 +122,7 @@ function generateHeaderFooterBody(cfg: import('./types.js').HeaderFooterConfig):
   } else if (cfg.outside || cfg.inside) {
     const outside = cfg.outside ? buildContentExpr(cfg.outside) : '';
     const inside = cfg.inside ? buildContentExpr(cfg.inside) : '';
-    const sep = cfg.separator ? ` ${escapeTypst(cfg.separator)} ` : '';
+    const sepText = cfg.separator ? escapeTypst(cfg.separator) : '';
 
     // Recto (odd): inside on left, outside on right
     // Verso (even): outside on left, inside on right
@@ -124,8 +133,8 @@ function generateHeaderFooterBody(cfg: import('./types.js').HeaderFooterConfig):
 
     const buildRow = (left: string, right: string): string => {
       if (left && right) {
-        if (sep) {
-          return `grid(columns: (1fr, auto, auto), text(size: ${fontSize}pt)[${left}], text(size: ${fontSize}pt)[${sep}], text(size: ${fontSize}pt)[${right}])`;
+        if (sepText) {
+          return `grid(columns: (1fr, auto, auto), column-gutter: 6pt, text(size: ${fontSize}pt)[${left}], text(size: ${fontSize}pt)[${sepText}], text(size: ${fontSize}pt)[${right}])`;
         }
         return `grid(columns: (1fr, auto), text(size: ${fontSize}pt)[${left}], text(size: ${fontSize}pt)[${right}])`;
       }
@@ -188,7 +197,8 @@ function generateChapter(
   }
 
   // Chapter title as level-1 heading (picked up by #outline)
-  parts.push(`#heading(level: 1)[${escapeTypst(title)}]`);
+  // Label with <book-chapter> so headers can distinguish from outline's "Contents" heading
+  parts.push(`#heading(level: 1)[${escapeTypst(title)}] <book-chapter>`);
   parts.push('');
   parts.push(`#v(${(config.fontSize * config.lineHeight).toFixed(1)}pt)`);
 

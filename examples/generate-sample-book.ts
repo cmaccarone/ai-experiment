@@ -198,20 +198,16 @@ const pdf = await generateBook(
     chapterTopDrop: 2,
     widowLines: 2,
     orphanLines: 2,
-    header: (ctx) => {
-      if (ctx.isChapterOpener) return null;
-      if (ctx.pageNumber <= 1) return null;
-      return {
-        left: ctx.isRecto ? undefined : 'The Manor House',
-        right: ctx.isRecto ? ctx.chapterTitle : undefined,
-        font: 'bodyItalic',
-        fontSize: 9,
-      };
+    header: {
+      outside: 'PAGE',
+      inside: 'CHAPTER',
+      separator: '|',
+      fontSize: 9,
     },
-    footer: (ctx) => ({
-      center: String(ctx.pageNumber),
+    footer: {
+      center: 'PAGE',
       fontSize: 10,
-    }),
+    },
   },
   {},
 );

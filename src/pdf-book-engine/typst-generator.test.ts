@@ -166,7 +166,7 @@ describe('generateTypstDocument', () => {
     const result = generateTypstDocument(simpleChapters, makeConfig({
       header: { outside: 'PAGE', inside: 'CHAPTER', separator: '|' },
     }), 0.5);
-    expect(result).toContain('str(n)');
+    expect(result).toContain('#str(n)');
     expect(result).toContain('#chapter-title');
     expect(result).toContain('calc.odd(n)');
   });
