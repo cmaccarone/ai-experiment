@@ -200,7 +200,7 @@ export async function layoutBook(
             if (item.typesetLine) {
               lines.push({
                 typesetLine: item.typesetLine,
-                x: marginLeft,
+                x: marginLeft + (item.indent ?? 0),
                 y,
               });
             }
@@ -292,10 +292,11 @@ function breakParagraph(
   const firstLineWidth = textBlockWidth - paragraphIndent;
   const lines = breakLines(measuredWords, textBlockWidth, spaceWidth, firstLineWidth);
 
-  return lines.map((line) => ({
+  return lines.map((line, i) => ({
     type: 'line' as const,
     height: lineHeight,
     typesetLine: line,
+    ...(i === 0 && paragraphIndent > 0 ? { indent: paragraphIndent } : {}),
   }));
 }
 

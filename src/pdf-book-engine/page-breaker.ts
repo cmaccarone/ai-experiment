@@ -17,6 +17,8 @@ export interface PageItem {
   imageHeight?: number;
   // For footnote area
   footnoteLines?: TypesetLine[];
+  // X-offset for this line (e.g. paragraph indent on first line)
+  indent?: number;
   // Can this item start a page?
   canStartPage?: boolean;
   // Keep with next item
