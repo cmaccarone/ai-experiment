@@ -98,30 +98,47 @@ export class PdfRenderer {
       return;
     }
 
-    // Filter to content words only (skip whitespace tokens)
-    const contentWords = words.filter(w => !/^\s+$/.test(w.text));
+    // Walk through the words array. Whitespace tokens mark word boundaries
+    // where a gap should appear; adjacent content words (e.g. "word" + ",")
+    // are rendered with zero gap. This is language-agnostic — no special
+    // punctuation handling needed.
+
+    // Count space boundaries and total content width for justification
+    let spaceCount = 0;
+    let totalContentWidth = 0;
+    const contentWords: MeasuredWord[] = [];
+
+    for (const w of words) {
+      if (/^\s+$/.test(w.text)) {
+        spaceCount++;
+      } else {
+        contentWords.push(w);
+        totalContentWidth += w.width;
+      }
+    }
     if (contentWords.length === 0) return;
 
-    // Calculate the gap between words
-    const totalContentWidth = contentWords.reduce((sum, w) => sum + w.width, 0);
-    let wordGap: number;
+    // Calculate the justified gap width for space boundaries
+    let spaceGap: number;
+    const bodyFont = this.writer.getFont('body');
+    const naturalSpace = bodyFont.widthOfTextAtSize(' ', fontSize);
 
-    if (!ts.isLastLine && contentWords.length > 1) {
-      // Justified: distribute remaining space evenly
-      wordGap = (ts.availableWidth - totalContentWidth) / (contentWords.length - 1);
+    if (!ts.isLastLine && spaceCount > 0) {
+      // Justified: distribute remaining space across space boundaries only
+      spaceGap = (ts.availableWidth - totalContentWidth) / spaceCount;
     } else {
-      // Last line or single word: use natural space width
-      const bodyFont = this.writer.getFont('body');
-      wordGap = bodyFont.widthOfTextAtSize(' ', fontSize);
+      spaceGap = naturalSpace;
     }
 
-    // Render each word individually at its calculated x position.
-    // PDF extractors detect gaps between drawText calls and insert single spaces.
-    for (let i = 0; i < contentWords.length; i++) {
-      const word = contentWords[i];
-      const font = this.writer.getFont(word.fontStyle);
-      page.drawText(word.text, { x, y, size: fontSize, font, color: rgb(0, 0, 0) });
-      x += word.width + (i < contentWords.length - 1 ? wordGap : 0);
+    // Render each token: content words are drawn, whitespace tokens advance x
+    for (const w of words) {
+      if (/^\s+$/.test(w.text)) {
+        x += spaceGap;
+      } else {
+        const font = this.writer.getFont(w.fontStyle);
+        page.drawText(w.text, { x, y, size: fontSize, font, color: rgb(0, 0, 0) });
+        x += w.width;
+      }
     }
   }
 

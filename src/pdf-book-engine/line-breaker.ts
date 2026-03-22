@@ -25,15 +25,20 @@ export function breakLines(
 ): TypesetLine[] {
   if (words.length === 0) return [];
 
-  // Separate content words from whitespace
-  const contentWords: Array<{ word: MeasuredWord; index: number }> = [];
-  const spaces: Array<{ word: MeasuredWord; afterIndex: number }> = [];
+  // Separate content words from whitespace, tracking adjacency
+  const contentWords: Array<{ word: MeasuredWord; index: number; hasSpaceBefore: boolean }> = [];
+  let lastWasSpace = false;
 
   for (let i = 0; i < words.length; i++) {
     if (isWhitespace(words[i].text)) {
-      spaces.push({ word: words[i], afterIndex: contentWords.length - 1 });
+      lastWasSpace = true;
     } else {
-      contentWords.push({ word: words[i], index: i });
+      contentWords.push({
+        word: words[i],
+        index: i,
+        hasSpaceBefore: contentWords.length > 0 && lastWasSpace,
+      });
+      lastWasSpace = false;
     }
   }
 
@@ -55,7 +60,7 @@ export function breakLines(
 
     for (let j = i; j < n; j++) {
       lineWidth += contentWords[j].word.width;
-      if (j > i) lineWidth += spaceWidth; // space between words
+      if (j > i && contentWords[j].hasSpaceBefore) lineWidth += spaceWidth;
 
       if (lineWidth > availableWidth && j > i) break; // won't fit any more words
 
@@ -97,8 +102,8 @@ export function breakLines(
     let lineWidth = 0;
 
     for (let k = start; k < end; k++) {
-      if (k > start) {
-        // Add space
+      if (k > start && contentWords[k].hasSpaceBefore) {
+        // Add space only where there was whitespace in the original input
         lineWords.push({ text: ' ', width: spaceWidth, fontStyle: contentWords[k].word.fontStyle });
         lineWidth += spaceWidth;
       }
