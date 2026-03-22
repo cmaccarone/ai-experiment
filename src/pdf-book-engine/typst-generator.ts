@@ -42,16 +42,6 @@ export function generateTypstDocument(
 function generatePageSetup(config: PdfBookConfig, gutterInches: number): string {
   const lines: string[] = [];
 
-  // Header/footer helper functions must be defined BEFORE #set page()
-  if (config.header) {
-    lines.push(generateHeaderFooterFunc('_typst_header_', config.header, config));
-    lines.push('');
-  }
-  if (config.footer) {
-    lines.push(generateHeaderFooterFunc('_typst_footer_', config.footer, config));
-    lines.push('');
-  }
-
   lines.push('#set page(');
   lines.push(`  width: ${config.trimWidth}in,`);
   lines.push(`  height: ${config.trimHeight}in,`);
@@ -63,19 +53,15 @@ function generatePageSetup(config: PdfBookConfig, gutterInches: number): string 
   lines.push('  ),');
   lines.push('  binding: left,');
 
-  // Header
   if (config.header) {
     lines.push(`  header: locate(loc => {`);
-    lines.push(`    let page-num = counter(page).at(loc).first()`);
-    lines.push(`    _typst_header_(page-num)`);
+    lines.push(generateHeaderFooterBody(config.header));
     lines.push(`  }),`);
   }
 
-  // Footer
   if (config.footer) {
     lines.push(`  footer: locate(loc => {`);
-    lines.push(`    let page-num = counter(page).at(loc).first()`);
-    lines.push(`    _typst_footer_(page-num)`);
+    lines.push(generateHeaderFooterBody(config.footer));
     lines.push(`  }),`);
   }
 
@@ -85,110 +71,77 @@ function generatePageSetup(config: PdfBookConfig, gutterInches: number): string 
 }
 
 /**
- * Pre-evaluate the header/footer callback for common page scenarios
- * and generate a Typst function that reproduces the behavior.
+ * Build a Typst content expression from a string with PAGE / CHAPTER placeholders.
+ * Uses variables `n` (page number) and `chapter-title` that are set in the
+ * enclosing locate block.
  */
-function generateHeaderFooterFunc(
-  name: string,
-  callback: (ctx: import('./types.js').PageContext) => import('./types.js').HeaderFooterContent | null,
-  config: PdfBookConfig,
-): string {
-  // Sample the callback with representative page contexts to detect the pattern
-  const samples = [
-    { pageNumber: 99991, isRecto: true, isChapterOpener: true, chapterTitle: 'CHAPTER', bookTitle: 'BOOK', totalPages: 100 },
-    { pageNumber: 99992, isRecto: false, isChapterOpener: false, chapterTitle: 'CHAPTER', bookTitle: 'BOOK', totalPages: 100 },
-    { pageNumber: 99993, isRecto: true, isChapterOpener: false, chapterTitle: 'CHAPTER', bookTitle: 'BOOK', totalPages: 100 },
-  ];
-
-  const results = samples.map(ctx => ({ ctx, result: callback(ctx) }));
-
-  const lines: string[] = [];
-  lines.push(`#let ${name}(page-num) = {`);
-
-  // Build conditional branches
-  const branches: string[] = [];
-
-  // Chapter opener (page 1 in our samples)
-  const openerResult = results[0].result;
-  if (openerResult === null) {
-    // No header on chapter openers — detected by checking isChapterOpener
-    // We'll use a state-based approach below
-  }
-
-  // Check if chapter openers are suppressed
-  const chapterOpenerSuppressed = openerResult === null;
-
-  // Verso (even) page
-  const versoResult = results[1].result;
-  // Recto (odd) non-opener page
-  const rectoResult = results[2].result;
-
-  if (chapterOpenerSuppressed) {
-    // We need chapter opener state tracking — use Typst's state
-    // For simplicity, we'll track chapter openers via a custom label
-    lines.push('  // Chapter opener pages have no header/footer');
-  }
-
-  // Generate the conditional logic
-  if (versoResult !== null || rectoResult !== null) {
-    const needsOddEven = JSON.stringify(versoResult) !== JSON.stringify(rectoResult);
-
-    if (needsOddEven) {
-      lines.push('  if calc.odd(page-num) {');
-      if (rectoResult) {
-        lines.push(`    ${generateHeaderFooterContent(rectoResult)}`);
-      }
-      lines.push('  } else {');
-      if (versoResult) {
-        lines.push(`    ${generateHeaderFooterContent(versoResult)}`);
-      }
-      lines.push('  }');
-    } else if (rectoResult) {
-      lines.push(`  ${generateHeaderFooterContent(rectoResult)}`);
-    }
-  }
-
-  lines.push('}');
-  return lines.join('\n');
+function buildContentExpr(text: string): string {
+  return text.split(/(PAGE|CHAPTER)/).map(part => {
+    if (part === 'PAGE') return '" + str(n) + "';
+    if (part === 'CHAPTER') return '#chapter-title';
+    return escapeTypst(part);
+  }).join('');
 }
 
 /**
- * Replace sentinel values in sampled header/footer text with Typst expressions.
- * - BOOK / CHAPTER → Typst state variables
- * - Sampled page numbers (e.g. "2", "3") → #str(page-num)
+ * Generate the body of a `locate(loc => { ... })` block for a header or footer.
+ * Compatible with Typst 0.10 — uses locate + counter.at(loc) + query(..., loc).
  */
-function substitutePlaceholders(text: string): string {
-  return text
-    .replace('BOOK', '" + _book-title_ + "')
-    .replace('CHAPTER', '" + _chapter-title_ + "')
-    .replace(/9999[123]/g, '" + str(page-num) + "');
-}
+function generateHeaderFooterBody(cfg: import('./types.js').HeaderFooterConfig): string {
+  const lines: string[] = [];
+  const fontSize = cfg.fontSize ?? 9;
 
-function generateHeaderFooterContent(content: import('./types.js').HeaderFooterContent): string {
-  const fontSize = content.fontSize ?? 9;
+  lines.push(`    let n = counter(page).at(loc).first()`);
 
-  if (content.left && content.right) {
-    const left = substitutePlaceholders(escapeTypst(content.left));
-    const right = substitutePlaceholders(escapeTypst(content.right));
-    return `text(size: ${fontSize}pt, fill: rgb("#4d4d4d"))[#grid(columns: (1fr, 1fr), align(left)[${left}], align(right)[${right}])]`;
+  // Resolve current chapter title from the most recent level-1 heading before this location
+  const needsChapter = [cfg.outside, cfg.inside, cfg.center]
+    .some(s => s && s.includes('CHAPTER'));
+  if (needsChapter) {
+    lines.push(`    let all-chapters = query(heading.where(level: 1).before(loc), loc)`);
+    lines.push(`    let chapter-title = if all-chapters.len() > 0 { all-chapters.last().body } else { [] }`);
   }
 
-  if (content.center) {
-    const center = substitutePlaceholders(escapeTypst(content.center));
-    return `align(center, text(size: ${fontSize}pt, fill: rgb("#4d4d4d"))[${center}])`;
+  if (cfg.hideOnChapterOpener !== false) {
+    // Skip on pages that contain a chapter heading
+    lines.push(`    let chapter-pages = query(heading.where(level: 1), loc).map(h => h.location().page())`);
+    lines.push(`    if n in chapter-pages { return }`);
   }
 
-  if (content.left) {
-    const left = substitutePlaceholders(escapeTypst(content.left));
-    return `align(left, text(size: ${fontSize}pt, fill: rgb("#4d4d4d"))[${left}])`;
+  if (cfg.center) {
+    const content = buildContentExpr(cfg.center);
+    lines.push(`    align(center, text(size: ${fontSize}pt)[${content}])`);
+  } else if (cfg.outside || cfg.inside) {
+    const outside = cfg.outside ? buildContentExpr(cfg.outside) : '';
+    const inside = cfg.inside ? buildContentExpr(cfg.inside) : '';
+    const sep = cfg.separator ? ` ${escapeTypst(cfg.separator)} ` : '';
+
+    // Recto (odd): inside on left, outside on right
+    // Verso (even): outside on left, inside on right
+    const rectoLeft = inside;
+    const rectoRight = outside;
+    const versoLeft = outside;
+    const versoRight = inside;
+
+    const buildRow = (left: string, right: string): string => {
+      if (left && right) {
+        if (sep) {
+          return `grid(columns: (1fr, auto, auto), text(size: ${fontSize}pt)[${left}], text(size: ${fontSize}pt)[${sep}], text(size: ${fontSize}pt)[${right}])`;
+        }
+        return `grid(columns: (1fr, auto), text(size: ${fontSize}pt)[${left}], text(size: ${fontSize}pt)[${right}])`;
+      }
+      if (left) return `align(left, text(size: ${fontSize}pt)[${left}])`;
+      if (right) return `align(right, text(size: ${fontSize}pt)[${right}])`;
+      return '';
+    };
+
+    lines.push(`    if calc.odd(n) {`);
+    lines.push(`      ${buildRow(rectoLeft, rectoRight)}`);
+    lines.push(`    } else {`);
+    lines.push(`      ${buildRow(versoLeft, versoRight)}`);
+    lines.push(`    }`);
   }
 
-  if (content.right) {
-    const right = substitutePlaceholders(escapeTypst(content.right));
-    return `align(right, text(size: ${fontSize}pt, fill: rgb("#4d4d4d"))[${right}])`;
-  }
-
-  return '';
+  return lines.join('\n');
 }
 
 function generateTextSetup(config: PdfBookConfig): string {

@@ -86,19 +86,16 @@ describe.skipIf(!fontsAvailable)('Integration: generateBook', () => {
 
   it('generates PDF with headers and footers', async () => {
     const pdf = await generateBook(sampleChapters, makeConfig({
-      header: (ctx) => {
-        if (ctx.isChapterOpener) return null;
-        return {
-          left: ctx.isRecto ? undefined : 'Test Book',
-          right: ctx.isRecto ? ctx.chapterTitle : undefined,
-          font: 'bodyItalic',
-          fontSize: 9,
-        };
+      header: {
+        outside: 'PAGE',
+        inside: 'CHAPTER',
+        separator: '|',
+        fontSize: 9,
       },
-      footer: (ctx) => ({
-        center: String(ctx.pageNumber),
+      footer: {
+        center: 'PAGE',
         fontSize: 10,
-      }),
+      },
     }));
 
     expect(pdf).toBeInstanceOf(Uint8Array);

@@ -21,25 +21,29 @@ export interface Chapter {
   html: string;
 }
 
-// ── Page Context ──
-
-export interface PageContext {
-  pageNumber: number;
-  isRecto: boolean;
-  isChapterOpener: boolean;
-  chapterTitle: string;
-  bookTitle: string;
-  totalPages: number;
-}
-
 // ── Header / Footer ──
 
-export interface HeaderFooterContent {
-  left?: string;
+/**
+ * Declarative header/footer layout for book pages.
+ *
+ * Use `outside` and `inside` for book-aware positioning:
+ * - `outside` = right on recto (odd) pages, left on verso (even) pages
+ * - `inside` = left on recto pages, right on verso pages
+ *
+ * Content strings support placeholders:
+ * - `PAGE` → current page number
+ * - `CHAPTER` → current chapter title
+ *
+ * Example: `{ outside: "PAGE", inside: "CHAPTER", separator: "|" }`
+ * renders as `Chapter Title | 5` on recto, `5 | Chapter Title` on verso.
+ */
+export interface HeaderFooterConfig {
+  outside?: string;
+  inside?: string;
   center?: string;
-  right?: string;
-  font?: 'body' | 'bodyItalic' | 'heading';
+  separator?: string;
   fontSize?: number;
+  hideOnChapterOpener?: boolean;
 }
 
 // ── Printer Profile ──
@@ -76,8 +80,8 @@ export interface PdfBookConfig {
   paragraphIndent: number;
   chapterStartRecto: boolean;
   chapterTopDrop: number;
-  header?: (ctx: PageContext) => HeaderFooterContent | null;
-  footer?: (ctx: PageContext) => HeaderFooterContent | null;
+  header?: HeaderFooterConfig;
+  footer?: HeaderFooterConfig;
   widowLines: number;
   orphanLines: number;
   tableOfContents?: boolean;

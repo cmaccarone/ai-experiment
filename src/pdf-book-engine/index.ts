@@ -11,8 +11,7 @@ import { tmpdir } from 'os';
 export type {
   Chapter,
   PdfBookConfig,
-  PageContext,
-  HeaderFooterContent,
+  HeaderFooterConfig,
   PrinterProfile,
   ValidationWarning,
 } from './types.js';

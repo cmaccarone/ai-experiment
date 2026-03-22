@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { generateTypstDocument, escapeTypst } from './typst-generator.js';
-import type { Chapter, PdfBookConfig, PageContext } from './types.js';
+import type { Chapter, PdfBookConfig } from './types.js';
 
 function makeConfig(overrides: Partial<PdfBookConfig> = {}): PdfBookConfig {
   return {
@@ -152,15 +152,38 @@ describe('generateTypstDocument', () => {
     expect(result).toContain('Empty');
   });
 
-  it('includes header/footer functions when configured', () => {
+  it('includes header/footer when configured', () => {
     const result = generateTypstDocument(simpleChapters, makeConfig({
-      header: (ctx) => ctx.isChapterOpener ? null : { center: 'Header' },
-      footer: (ctx) => ({ center: String(ctx.pageNumber) }),
+      header: { outside: 'PAGE', inside: 'CHAPTER', separator: '|' },
+      footer: { center: 'PAGE' },
     }), 0.5);
-    expect(result).toContain('header:');
-    expect(result).toContain('footer:');
-    expect(result).toContain('_typst_header_');
-    expect(result).toContain('_typst_footer_');
+    expect(result).toContain('header: locate');
+    expect(result).toContain('footer: locate');
+    expect(result).toContain('counter(page)');
+  });
+
+  it('resolves PAGE and CHAPTER placeholders in header', () => {
+    const result = generateTypstDocument(simpleChapters, makeConfig({
+      header: { outside: 'PAGE', inside: 'CHAPTER', separator: '|' },
+    }), 0.5);
+    expect(result).toContain('str(n)');
+    expect(result).toContain('#chapter-title');
+    expect(result).toContain('calc.odd(n)');
+  });
+
+  it('hides header on chapter opener pages by default', () => {
+    const result = generateTypstDocument(simpleChapters, makeConfig({
+      header: { outside: 'PAGE' },
+    }), 0.5);
+    expect(result).toContain('chapter-pages');
+    expect(result).toContain('if n in chapter-pages');
+  });
+
+  it('respects hideOnChapterOpener: false', () => {
+    const result = generateTypstDocument(simpleChapters, makeConfig({
+      header: { outside: 'PAGE', hideOnChapterOpener: false },
+    }), 0.5);
+    expect(result).not.toContain('chapter-pages');
   });
 
   it('uses binding: left for recto/verso', () => {
