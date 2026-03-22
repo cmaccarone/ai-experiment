@@ -23,67 +23,63 @@ async function createMeasurer(): Promise<TextMeasurer> {
 }
 
 describe.skipIf(!fontsAvailable)('TextMeasurer', () => {
-  describe('ligature handling', () => {
-    it('measures "fi" ligature consistently (fi vs f+i)', async () => {
+  describe('ligature handling (deliberately disabled)', () => {
+    // pdf-lib/fontkit has a bug where GSUB ligature substitution creates
+    // visual gaps inside words when rendered via drawText. To keep
+    // measurement and rendering consistent, we deliberately measure
+    // char-by-char WITHOUT ligatures. The renderer also draws char-by-char
+    // to avoid triggering fontkit's ligature bug.
+
+    it('measures "fi" as f+i (no ligature substitution)', async () => {
       const m = await createMeasurer();
       const fiWidth = m.measureText('fi', 'body');
       const fWidth = m.measureText('f', 'body');
       const iWidth = m.measureText('i', 'body');
-      // "fi" should NOT equal f+i if ligature is applied — the ligature glyph is narrower
-      // This test documents that we account for ligatures
-      expect(fiWidth).not.toBeCloseTo(fWidth + iWidth, 1);
-      expect(fiWidth).toBeLessThan(fWidth + iWidth);
+      // Measurement should equal f+i since we skip ligatures
+      expect(fiWidth).toBeCloseTo(fWidth + iWidth, 5);
     });
 
-    it('measures "fl" ligature consistently', async () => {
+    it('measures "fl" as f+l (no ligature substitution)', async () => {
       const m = await createMeasurer();
       const flWidth = m.measureText('fl', 'body');
       const fWidth = m.measureText('f', 'body');
       const lWidth = m.measureText('l', 'body');
-      // fl ligature should be narrower than f+l separate
-      expect(flWidth).toBeLessThan(fWidth + lWidth);
+      expect(flWidth).toBeCloseTo(fWidth + lWidth, 5);
     });
 
-    it('measures words with "fi" using ligature width', async () => {
+    it('word measurement equals sum of character measurements', async () => {
       const m = await createMeasurer();
-      // Words containing common ligatures
-      const words = ['fixed', 'justified', 'justification', 'first', 'find', 'office', 'float'];
+      // Words containing common ligature pairs (fi, fl)
+      const words = ['fixed', 'justified', 'justification', 'first', 'float', 'office'];
       for (const word of words) {
-        const width = m.measureText(word, 'body');
-        // Width should be positive and reasonable
-        expect(width).toBeGreaterThan(0);
-        // Build expected width from individual chars (no ligatures)
-        let charByCharWidth = 0;
+        const wordWidth = m.measureText(word, 'body');
+        let charSum = 0;
         for (let i = 0; i < word.length; i++) {
-          charByCharWidth += m.measureText(word[i], 'body');
+          charSum += m.measureText(word[i], 'body');
         }
-        // Ligature-aware measurement should be narrower than char-by-char
-        // for words containing fi/fl
-        if (word.includes('fi') || word.includes('fl')) {
-          expect(width).toBeLessThan(charByCharWidth);
-        }
+        // Word width should match char-by-char sum (no ligature applied)
+        // Small tolerance for kerning differences
+        expect(wordWidth).toBeCloseTo(charSum, 1);
       }
     });
 
-    it('measureRuns applies ligatures for styled text', async () => {
+    it('measureRuns width matches char-by-char for ligature words', async () => {
       const m = await createMeasurer();
       const runs = [{ text: 'justified text', bold: false, italic: false }];
       const measured = m.measureRuns(runs);
 
-      // "justified" token should use ligature-aware width
       const justifiedToken = measured.find(w => w.text === 'justified');
       expect(justifiedToken).toBeDefined();
 
-      // Measure char-by-char for comparison
       let charByChar = 0;
       for (const ch of 'justified') {
         charByChar += m.measureText(ch, 'body');
       }
-      // The token width should be less than char-by-char sum (ligature is narrower)
-      expect(justifiedToken!.width).toBeLessThan(charByChar);
+      // Should match (no ligature savings)
+      expect(justifiedToken!.width).toBeCloseTo(charByChar, 1);
     });
 
-    it('measureRuns handles ligatures in italic text', async () => {
+    it('measureRuns italic width matches char-by-char', async () => {
       const m = await createMeasurer();
       const runs = [{ text: 'finding', bold: false, italic: true }];
       const measured = m.measureRuns(runs);
@@ -92,12 +88,11 @@ describe.skipIf(!fontsAvailable)('TextMeasurer', () => {
       expect(token).toBeDefined();
       expect(token!.fontStyle).toBe('bodyItalic');
 
-      // Should use ligature-aware width
       let charByChar = 0;
       for (const ch of 'finding') {
         charByChar += m.measureText(ch, 'bodyItalic');
       }
-      expect(token!.width).toBeLessThan(charByChar);
+      expect(token!.width).toBeCloseTo(charByChar, 1);
     });
   });
 

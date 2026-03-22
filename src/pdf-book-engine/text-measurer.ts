@@ -20,6 +20,11 @@ export class TextMeasurer {
     const scale = this.fontSize / metrics.unitsPerEm;
     let width = 0;
 
+    // Measure character-by-character to match pdf-lib's actual rendering.
+    // pdf-lib/fontkit has a bug where GSUB ligature substitution (fi, fl)
+    // creates visual gaps inside words when rendered via drawText. So we
+    // deliberately skip ligatures here to keep measurement and rendering
+    // consistent. See text-measurer.test.ts for details.
     for (let i = 0; i < text.length; i++) {
       const cp = text.codePointAt(i)!;
       const glyphWidth = this.fontManager.getGlyphWidth(style, cp);
