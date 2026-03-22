@@ -1,4 +1,5 @@
 import { PDFDocument, PDFFont, PDFPage, rgb, StandardFonts } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
 import type { FontManager } from './font-manager.js';
 import type { FontStyle } from './types.js';
 
@@ -15,6 +16,7 @@ export class PdfWriter {
 
   static async create(): Promise<PdfWriter> {
     const doc = await PDFDocument.create();
+    doc.registerFontkit(fontkit);
     return new PdfWriter(doc);
   }
 
