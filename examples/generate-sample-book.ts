@@ -11,11 +11,8 @@ import { generateBook } from '../src/pdf-book-engine/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Load fonts
+// Font paths for Typst
 const fontsDir = resolve(__dirname, 'fonts');
-const bodyFont = readFileSync(resolve(fontsDir, 'EBGaramond-Regular.ttf'));
-const italicFont = readFileSync(resolve(fontsDir, 'EBGaramond-Italic.ttf'));
-const boldFont = readFileSync(resolve(fontsDir, 'EBGaramond-Bold.ttf'));
 
 // Define chapters
 const chapters = [
@@ -189,10 +186,10 @@ const pdf = await generateBook(
     trimHeight: 9,
     margins: { top: 0.75, bottom: 0.75, inside: 0.75, outside: 0.5 },
     fonts: {
-      body: bodyFont,
-      bodyItalic: italicFont,
-      bodyBold: boldFont,
-      heading: boldFont,
+      body: resolve(fontsDir, 'EBGaramond-Regular.ttf'),
+      bodyItalic: resolve(fontsDir, 'EBGaramond-Italic.ttf'),
+      bodyBold: resolve(fontsDir, 'EBGaramond-Bold.ttf'),
+      heading: resolve(fontsDir, 'EBGaramond-Bold.ttf'),
     },
     fontSize: 11,
     lineHeight: 1.4,

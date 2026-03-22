@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { writeFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { generateBook } from '../src/pdf-book-engine/index.js';
@@ -6,13 +6,6 @@ import type { Chapter, PdfBookConfig } from '../src/pdf-book-engine/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fontsDir = resolve(__dirname, '../examples/fonts');
-
-const fonts = {
-  body: readFileSync(resolve(fontsDir, 'EBGaramond-Regular.ttf')),
-  bodyItalic: readFileSync(resolve(fontsDir, 'EBGaramond-Italic.ttf')),
-  bodyBold: readFileSync(resolve(fontsDir, 'EBGaramond-Bold.ttf')),
-  heading: readFileSync(resolve(fontsDir, 'EBGaramond-Bold.ttf')),
-};
 
 const chapters: Chapter[] = [
   {
@@ -46,7 +39,12 @@ const config: PdfBookConfig = {
   trimWidth: 6,
   trimHeight: 9,
   margins: { top: 0.75, bottom: 0.75, inside: 0.75, outside: 0.5 },
-  fonts,
+  fonts: {
+    body: resolve(fontsDir, 'EBGaramond-Regular.ttf'),
+    bodyItalic: resolve(fontsDir, 'EBGaramond-Italic.ttf'),
+    bodyBold: resolve(fontsDir, 'EBGaramond-Bold.ttf'),
+    heading: resolve(fontsDir, 'EBGaramond-Bold.ttf'),
+  },
   fontSize: 11,
   lineHeight: 1.4,
   paragraphIndent: 1.5,

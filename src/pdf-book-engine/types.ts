@@ -82,63 +82,9 @@ export interface PdfBookConfig {
   orphanLines: number;
 }
 
-// ── Layout intermediates ──
+// ── Font style identifiers ──
 
 export type FontStyle = 'body' | 'bodyItalic' | 'bodyBold' | 'heading';
-
-export function getFontStyle(bold: boolean, italic: boolean): FontStyle {
-  if (bold) return 'bodyBold';
-  if (italic) return 'bodyItalic';
-  return 'body';
-}
-
-// A measured word ready for line breaking
-export interface MeasuredWord {
-  text: string;
-  width: number;
-  fontStyle: FontStyle;
-  link?: string;
-}
-
-// Result of line breaking: a single typeset line
-export interface TypesetLine {
-  words: MeasuredWord[];
-  width: number;           // actual content width
-  availableWidth: number;  // target width
-  isLastLine: boolean;     // don't justify last line of paragraph
-}
-
-// A laid-out line with vertical position info
-export interface LayoutLine {
-  typesetLine: TypesetLine;
-  y: number;  // y position from top of page (points)
-  x: number;  // x position (left margin, accounts for gutter)
-}
-
-// Footnote reference
-export interface Footnote {
-  index: number;
-  url: string;
-}
-
-// A fully laid-out page
-export interface LayoutPage {
-  pageNumber: number;
-  isRecto: boolean;
-  isChapterOpener: boolean;
-  chapterTitle: string;
-  lines: LayoutLine[];
-  footnotes: Footnote[];
-  images: LayoutImage[];
-}
-
-export interface LayoutImage {
-  src: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
 
 // Validation warning
 export interface ValidationWarning {

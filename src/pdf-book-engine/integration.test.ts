@@ -4,9 +4,6 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { generateBook } from './index.js';
 import { parseHtml } from './html-parser.js';
-import { FontManager } from './font-manager.js';
-import { TextMeasurer } from './text-measurer.js';
-import { breakLines } from './line-breaker.js';
 import { LULU_PROFILE, KDP_PROFILE, INGRAM_PROFILE } from './printer-profiles.js';
 import type { Chapter, PdfBookConfig } from './types.js';
 
@@ -19,12 +16,25 @@ const fontsAvailable =
   existsSync(resolve(fontsDir, 'EBGaramond-Italic.ttf')) &&
   existsSync(resolve(fontsDir, 'EBGaramond-Bold.ttf'));
 
-function loadFonts() {
+function makeConfig(overrides: Partial<PdfBookConfig> = {}): PdfBookConfig {
   return {
-    body: readFileSync(resolve(fontsDir, 'EBGaramond-Regular.ttf')),
-    bodyItalic: readFileSync(resolve(fontsDir, 'EBGaramond-Italic.ttf')),
-    bodyBold: readFileSync(resolve(fontsDir, 'EBGaramond-Bold.ttf')),
-    heading: readFileSync(resolve(fontsDir, 'EBGaramond-Bold.ttf')),
+    trimWidth: 6,
+    trimHeight: 9,
+    margins: { top: 0.75, bottom: 0.75, inside: 0.75, outside: 0.5 },
+    fonts: {
+      body: resolve(fontsDir, 'EBGaramond-Regular.ttf'),
+      bodyItalic: resolve(fontsDir, 'EBGaramond-Italic.ttf'),
+      bodyBold: resolve(fontsDir, 'EBGaramond-Bold.ttf'),
+      heading: resolve(fontsDir, 'EBGaramond-Bold.ttf'),
+    },
+    fontSize: 11,
+    lineHeight: 1.4,
+    paragraphIndent: 1.5,
+    chapterStartRecto: true,
+    chapterTopDrop: 2,
+    widowLines: 2,
+    orphanLines: 2,
+    ...overrides,
   };
 }
 
@@ -61,23 +71,6 @@ const sampleChapters: Chapter[] = [
     `,
   },
 ];
-
-function makeConfig(overrides: Partial<PdfBookConfig> = {}): PdfBookConfig {
-  return {
-    trimWidth: 6,
-    trimHeight: 9,
-    margins: { top: 0.75, bottom: 0.75, inside: 0.75, outside: 0.5 },
-    fonts: loadFonts(),
-    fontSize: 11,
-    lineHeight: 1.4,
-    paragraphIndent: 1.5,
-    chapterStartRecto: true,
-    chapterTopDrop: 2,
-    widowLines: 2,
-    orphanLines: 2,
-    ...overrides,
-  };
-}
 
 describe.skipIf(!fontsAvailable)('Integration: generateBook', () => {
   it('generates a valid PDF with basic chapters', async () => {
@@ -173,7 +166,7 @@ describe.skipIf(!fontsAvailable)('Integration: generateBook', () => {
     );
 
     expect(pdf).toBeInstanceOf(Uint8Array);
-    expect(pdf.length).toBeGreaterThan(1000); // should be substantial
+    expect(pdf.length).toBeGreaterThan(1000);
   });
 
   it('handles empty chapter HTML gracefully', async () => {
@@ -194,54 +187,17 @@ describe.skipIf(!fontsAvailable)('Integration: generateBook', () => {
     expect(pdf11.length).not.toBe(pdf14.length);
   });
 
-  it('does not produce over-stretched justified spaces with paragraph indent', async () => {
-    // Regression test: the user-reported HTML snippet had visibly wide spaces
-    // on non-first lines because breakLines used the narrower first-line width
-    // for all lines, but justification used the full text block width.
-    const testHtml = `<p>The voyage took roughly <strong>two weeks</strong>. The ship arrived in <strong>New York on April 11, 1909</strong>.</p><h2>Ellis Island</h2><p>When they arrived, the family passed the <strong>Statue of Liberty</strong> and went through <strong>Ellis Island</strong>, where every immigrant was inspected and documented.</p><p>The ship's manifest recorded names, ages, nationality, destination, and other details. These records were not casual paperwork. They were legal immigration documents. To be \u201Cmanifested\u201D meant one\u2019s arrival had been officially documented. Officials used these records to determine whether immigrants met the legal requirements for entry, including health screening and financial support.</p>`;
+  it('works with fonts passed as ArrayBuffers', async () => {
+    const pdf = await generateBook(sampleChapters, makeConfig({
+      fonts: {
+        body: readFileSync(resolve(fontsDir, 'EBGaramond-Regular.ttf')).buffer as ArrayBuffer,
+        bodyItalic: readFileSync(resolve(fontsDir, 'EBGaramond-Italic.ttf')).buffer as ArrayBuffer,
+        bodyBold: readFileSync(resolve(fontsDir, 'EBGaramond-Bold.ttf')).buffer as ArrayBuffer,
+      },
+    }));
 
-    const blocks = parseHtml(testHtml);
-    const fonts = loadFonts();
-    const fontManager = new FontManager();
-    await fontManager.loadFont('body', fonts.body);
-    await fontManager.loadFont('bodyBold', fonts.bodyBold);
-    await fontManager.loadFont('bodyItalic', fonts.bodyItalic);
-
-    const fontSize = 11;
-    const measurer = new TextMeasurer(fontManager, fontSize);
-    const textBlockWidth = 300; // ~4 inches of text
-    const paragraphIndent = 16.5; // 1.5em at 11pt
-    const firstLineWidth = textBlockWidth - paragraphIndent;
-    const spaceWidth = measurer.measureSpace('body');
-
-    for (const block of blocks) {
-      if (block.type !== 'paragraph') continue;
-
-      const measuredWords = measurer.measureRuns(block.runs);
-      const lines = breakLines(measuredWords, textBlockWidth, spaceWidth, firstLineWidth);
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const contentWidth = line.words
-          .filter(w => !/^\s+$/.test(w.text))
-          .reduce((sum, w) => sum + w.width, 0);
-        const spaceCount = line.words.filter(w => /^\s+$/.test(w.text)).length;
-        const naturalWidth = contentWidth + spaceCount * spaceWidth;
-
-        // Every line's natural content+spaces must fit within its availableWidth.
-        // A small tolerance (1pt) accounts for floating-point rounding.
-        expect(naturalWidth).toBeLessThanOrEqual(
-          line.availableWidth + 1,
-          `Line ${i} overflows its availableWidth (${naturalWidth.toFixed(1)} > ${line.availableWidth})`,
-        );
-
-        // First line should use the narrower indent width
-        if (i === 0) {
-          expect(line.availableWidth).toBe(firstLineWidth);
-        } else {
-          expect(line.availableWidth).toBe(textBlockWidth);
-        }
-      }
-    }
+    expect(pdf).toBeInstanceOf(Uint8Array);
+    const header = String.fromCharCode(...pdf.slice(0, 5));
+    expect(header).toBe('%PDF-');
   });
 });
